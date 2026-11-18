@@ -1,17 +1,19 @@
 # codeviz
 
-基于 CodeGraph 索引的架构 / 调用链 / 复杂度可视化工具：把一个已索引的代码库变成**可离线打开**的静态站点。
+把 CodeGraph 索引变成**可离线打开的**架构 / 调用链 / 复杂度可视化站点：
 
 ```bash
 codeviz build <project> --out .codeviz --format site|single-file
 ```
 
+一个命令读取 `<project>/.codegraph/codegraph.db`（或一份 `codeviz/v1` JSON），聚合模块依赖、文件调用关系、入口路由和函数复杂度（分支 / `except` / 行数），生成带语义缩放、URL 深链和源码预览的单页应用。产物无 CDN、无后端、无需联网，默认写到 `<project>/.codeviz/index.html`，双击即开；`--format single-file` 则打成单个 HTML，方便通过 IM / 邮件分发。
+
 - 输入：任意 CodeGraph 已索引项目（`.codegraph/codegraph.db`），或一份 `codeviz/v1` JSON。
 - 输出：默认 `<project>/.codeviz/index.html`，无 CDN、无后端、双击即开。
-- 语言指标：本轮只做 Python（AST 统计分支 / `except` / 行数）；其他语言走通用 JSON 适配器。
+- 语言指标：目前只做 Python（AST 统计分支 / `except` / 行数）；其他语言走通用 JSON 适配器。
 - 原则：只读目标项目，不改目标项目运行时代码。
 
-> 实现契约见 [`CONTRACT.md`](./CONTRACT.md)。本 README 面向使用者与二次开发者；契约是并行开发的接口基线。
+> 版本 0.1.0（P0 范围）。实现契约见 [`CONTRACT.md`](./CONTRACT.md)；本 README 面向使用者与二次开发者；契约是并行开发的接口基线。
 
 ---
 
@@ -36,9 +38,9 @@ pytest
 
 安装后入口为 `codeviz`（等价 `python -m codeviz.cli`）。不安装也可以从仓库根直接运行：
 
-```bash
-# 先让 Python 找到 codeviz 包（PowerShell）
-set PYTHONPATH=/path/to/codeviz
+```powershell
+# 先让 Python 找到 codeviz 包（仓库根即包所在目录）
+$env:PYTHONPATH = "F:\path\to\codeviz"
 python -m codeviz.cli build ./examples/demo --config ./examples/demo/codeviz.json
 ```
 
@@ -66,10 +68,12 @@ codeviz build . --open                                  # 生成后打开浏览�
 codeviz validate ./data.json                            # 校验一份 codeviz/v1 数据（也支持 data.js）
 ```
 
+代码改动后索引不会自动刷新，需要时先跑 `codegraph sync`（增量）或 `codegraph index`（全量重建）。
+
 想看效果但手头没有 CodeGraph 索引？用示例项目：
 
 ```bash
-cd codeviz/examples/demo
+cd examples/demo
 codegraph init -y          # 生成 .codegraph/codegraph.db
 codeviz build . --config codeviz.json --out ./.codeviz --open
 ```
@@ -229,7 +233,7 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 - **源码预览**：调用 / 复杂度里点函数，右侧展示源码片段与 `file:line`。
 - **覆盖层**：配置化 `layers` 或 `image`。
 
-本轮不做：
+当前不做：
 
 - 路径查询、循环 / 分层违规检测、风险分、diff、未解析边展示；
 - VS Code 插件；
@@ -266,8 +270,8 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 
 2. 在 `codeviz/web/index.html` 里按顺序加 `<script src="assets/views/myview.js"></script>`（在 `app.js` 之前）。
 3. 在 `app.js` 的 tab 表里登记 `myview`（名称 / 图标 / 标题）。
-4. 在 `codeviz/pyproject.toml` 的 `package-data` 里确认 `web/views/*` 会被打进包（已包含）。
-5. 加测试：`codeviz/tests/test_render.py` 断言 `assets/views/myview.js` 存在，并补一个深链用例。
+4. 在 `pyproject.toml` 的 `package-data` 里确认 `web/views/*` 会被打进包（已包含）。
+5. 加测试：`tests/test_render.py` 断言 `assets/views/myview.js` 存在，并补一个深链用例。
 
 外壳提供的能力：
 
@@ -281,15 +285,21 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 | `window.CodeVizSource.showFile(path, line)` | 打开文件源码并定位行 |
 | `window.CodeVizSource.hide()` | 关闭侧栏 |
 
-数据侧扩展：优先在适配器里补字段（追加、不破坏既有字段），或在 `codeviz/tests/fixtures/minimal_data.json` 里加样例后用
+数据侧扩展：优先在适配器里补字段（追加、不破坏既有字段），或在 `tests/fixtures/minimal_data.json` 里加样例后用
 `codeviz validate` + `render_site` 快速验证前端。
 
 ## 8. 测试
 
 ```bash
-# 仓库根执行（conftest.py 已把 codeviz/ 加入 sys.path，无需 pip install -e）
-.venv\Scripts\python.exe -m pytest codeviz/tests -q
+# 仓库根执行（conftest.py 已把仓库根加入 sys.path，无需 pip install -e）
+python -m pytest -q
+
+# 只跑某类用例
+python -m pytest tests/test_render.py -q
 ```
+
+当前 52 个用例，不到 1 秒跑完；不需要安装或运行 `codegraph`（测试用 `tests/_codegraph_fixture.py` 现场生成索引库）。
+CI（`.github/workflows/tests.yml`）在 Python 3.10 / 3.11 / 3.12 上执行同一命令。
 
 测试分类：
 
@@ -317,6 +327,7 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 
 ```
 codeviz/
+  AGENTS.md            # 面向 AI / 新贡献者的仓库约定与坑
   CONTRACT.md          # 接口基线
   pyproject.toml
   README.md
@@ -334,5 +345,8 @@ codeviz/
     render.py          # site / single-file 输出
     web/               # SPA 外壳与视图
   tests/               # pytest
+    _codegraph_fixture.py  # 现场生成最小 CodeGraph 索引库
   examples/demo/       # 12 文件示例项目 + codeviz.json
 ```
+
+改动代码或打包 web 资源前，先看 [`AGENTS.md`](./AGENTS.md)：里面记录了数据流、测试夹具、`single-file` 内联与 package-data 等容易踩的坑。
