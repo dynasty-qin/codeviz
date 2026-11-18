@@ -1,0 +1,5 @@
+include README.md
+include CONTRACT.md
+recursive-include codeviz/web *
+recursive-include tests *
+recursive-include examples *

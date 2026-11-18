@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codeviz"
+version = "0.1.0"
+description = "CodeGraph-based architecture, call-chain and complexity visualization"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+codeviz = "codeviz.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["codeviz*"]
+
+[tool.setuptools.package-data]
+codeviz = ["web/*", "web/views/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

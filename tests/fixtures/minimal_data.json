@@ -1,0 +1,144 @@
+{
+  "schema": "codeviz/v1",
+  "project": {
+    "name": "minimal-fixture",
+    "root": "fixtures/minimal",
+    "description": "通用 JSON 适配器测试夹具：结构覆盖 codeviz/v1 的全部顶层字段",
+    "generated_at": "2026-11-18T12:00:00+08:00"
+  },
+  "index": {
+    "database": "none",
+    "files": 2,
+    "nodes": 4,
+    "edges": 2,
+    "routes": 1
+  },
+  "groups": {
+    "router": { "label": "路由", "color": "#818cf8" },
+    "service": { "label": "业务服务", "color": "#34d399" }
+  },
+  "modules": [
+    {
+      "id": "router:demo",
+      "label": "demo 路由",
+      "group": "router",
+      "fileCount": 1,
+      "symbols": 1,
+      "files": ["router/demo_router.py"],
+      "desc": "只有一个路由函数"
+    },
+    {
+      "id": "service:demo",
+      "label": "demo 服务",
+      "group": "service",
+      "fileCount": 1,
+      "symbols": 1,
+      "files": ["service/demo_service.py"]
+    }
+  ],
+  "moduleEdges": [
+    {
+      "source": "router:demo",
+      "target": "service:demo",
+      "weight": 1,
+      "kinds": { "calls": 1 }
+    }
+  ],
+  "files": [
+    {
+      "path": "router/demo_router.py",
+      "module": "router:demo",
+      "group": "router",
+      "lines": 12,
+      "symbols": 1,
+      "branches": 1,
+      "excepts": 0,
+      "functions": 1
+    },
+    {
+      "path": "service/demo_service.py",
+      "module": "service:demo",
+      "group": "service",
+      "lines": 20,
+      "symbols": 1,
+      "branches": 2,
+      "excepts": 1,
+      "functions": 1
+    }
+  ],
+  "fileEdges": [
+    {
+      "source": "router/demo_router.py",
+      "target": "service/demo_service.py",
+      "weight": 1
+    }
+  ],
+  "symbols": [
+    {
+      "id": "function:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "name": "handle_demo",
+      "qualified": "handle_demo",
+      "file": "router/demo_router.py",
+      "line": 6,
+      "end": 12,
+      "kind": "function",
+      "module": "router:demo",
+      "group": "router",
+      "signature": "(payload) -> dict",
+      "doc": "处理示例请求。",
+      "lines": 7,
+      "branches": 1,
+      "excepts": 0,
+      "source": "def handle_demo(payload):\n    return run_demo(payload)\n"
+    },
+    {
+      "id": "function:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "name": "run_demo",
+      "qualified": "run_demo",
+      "file": "service/demo_service.py",
+      "line": 10,
+      "end": 20,
+      "kind": "function",
+      "module": "service:demo",
+      "group": "service",
+      "signature": "(payload) -> dict",
+      "doc": "真正的业务逻辑。",
+      "lines": 11,
+      "branches": 2,
+      "excepts": 1,
+      "source": "def run_demo(payload):\n    try:\n        return {\"ok\": True}\n    except ValueError:\n        return {\"ok\": False}\n"
+    }
+  ],
+  "calls": [
+    {
+      "source": "function:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "target": "function:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "entries": [
+    {
+      "label": "POST /api/demo",
+      "id": "function:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "overlays": [
+    {
+      "id": "business",
+      "title": "业务分层",
+      "type": "layers",
+      "subtitle": "接入层 → 服务层",
+      "layers": [
+        {
+          "title": "接入层",
+          "columns": 1,
+          "items": [{ "title": "demo 路由", "desc": "解析请求" }]
+        },
+        {
+          "title": "服务层",
+          "columns": 1,
+          "items": [{ "title": "demo 服务", "desc": "业务处理" }]
+        }
+      ]
+    }
+  ]
+}

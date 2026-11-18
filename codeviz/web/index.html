@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codeviz · 架构可视化</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo"></div>
+      <div>
+        <h1 id="brand-title">codeviz</h1>
+        <p id="brand-sub">CodeGraph · 架构 / 调用 / 复杂度</p>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="spacer"></div>
+    <div class="hint" id="global-hint">点击顶部视图切换 · 支持 URL 深链</div>
+  </header>
+
+  <main class="stage">
+    <div id="view-root"></div>
+
+    <aside class="source-panel" id="source-panel">
+      <header class="source-head">
+        <div>
+          <h2 id="source-title">源码</h2>
+          <p id="source-meta"></p>
+        </div>
+        <div class="source-actions">
+          <button class="icon-btn" id="source-copy" title="复制路径">复制</button>
+          <a class="icon-btn" id="source-vscode" href="#" title="在 VS Code 打开">VS Code</a>
+          <button class="icon-btn" id="source-close" title="关闭">关闭</button>
+        </div>
+      </header>
+      <pre class="source-code"><code id="source-code"></code></pre>
+    </aside>
+
+    <div class="toast" id="toast"></div>
+  </main>
+</div>
+
+<script src="assets/data.js"></script>
+<script src="assets/views/source.js"></script>
+<script src="assets/views/deps.js"></script>
+<script src="assets/views/calls.js"></script>
+<script src="assets/views/complexity.js"></script>
+<script src="assets/views/overlay.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

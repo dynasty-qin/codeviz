@@ -1,0 +1,65 @@
+{
+  "schema": "codeviz/v1",
+  "project": {
+    "name": "codeviz-demo",
+    "description": "codeviz 示例项目：router / service / store 三层的最小任务服务"
+  },
+  "index": {
+    "database": ".codegraph/codegraph.db"
+  },
+  "groups": {
+    "router": { "label": "路由", "color": "#818cf8" },
+    "service": { "label": "业务服务", "color": "#34d399" },
+    "app": { "label": "应用装配", "color": "#60a5fa" },
+    "other": { "label": "其他", "color": "#94a3b8" }
+  },
+  "defaults": {
+    "group": "other",
+    "id": "{dir}"
+  },
+  "modules": [
+    { "glob": "app/router/*_router.py", "id": "router:{stem}", "label": "路由 · {stem}", "group": "router" },
+    { "glob": "app/service/*_service.py", "id": "service:{stem}", "label": "服务 · {stem}", "group": "service" },
+    { "glob": "app/**/__init__.py", "id": "pkg:{dir}", "label": "包 · {dir}", "group": "app" },
+    { "glob": "app/*.py", "id": "app:{stem}", "label": "应用 · {stem}", "group": "app" },
+    { "glob": "app/**/*.py", "id": "{rel}", "label": "{dir}", "group": "app" }
+  ],
+  "metrics": {
+    "language": "python",
+    "source_lines": 60
+  },
+  "overlays": [
+    {
+      "id": "business",
+      "title": "业务分层",
+      "type": "layers",
+      "subtitle": "router → service → store",
+      "layers": [
+        {
+          "title": "接入层",
+          "columns": 2,
+          "items": [
+            { "title": "任务路由", "desc": "创建 / 列表 / 完成" },
+            { "title": "日报路由", "desc": "摘要 / 状态看板" }
+          ]
+        },
+        {
+          "title": "领域层",
+          "columns": 2,
+          "items": [
+            { "title": "TaskService", "desc": "校验 / 状态流转" },
+            { "title": "ReportService", "desc": "任务聚合 / 摘要" }
+          ]
+        },
+        {
+          "title": "数据层",
+          "columns": 2,
+          "items": [
+            { "title": "MemoryStore", "desc": "内存任务表" },
+            { "title": "Task / Report", "desc": "领域模型" }
+          ]
+        }
+      ]
+    }
+  ]
+}
