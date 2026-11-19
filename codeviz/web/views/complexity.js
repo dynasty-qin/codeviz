@@ -4,138 +4,129 @@
   // 复杂度视图：squarified treemap。group 分组、文件为块。
   // 面积可切「行数 / 分支」，颜色可切「分支总量 / 分支密度」。
   // 数据来自 data.files / data.symbols，只使用 Canvas + DOM。
+  // 公共工具来自 views/common.js（window.CV），主题色来自 window.CVTheme。
+
+  const CV = window.CV;
+  const THEME = window.CVTheme;
+
+  const esc = CV.esc;
+  const num = CV.num;
+  const clamp = CV.clamp;
+
+  // 绿 -> 琥珀 -> 红；语义保持「越红越复杂」。
+  const SCALE = THEME.scale;
+
+  // 数据里的颜色写进内联样式前先过白名单，防止注入 CSS。
+  const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+  function safeColor(value, fallback) {
+    const text = String(value == null ? "" : value).trim();
+    return HEX_COLOR.test(text) ? text : fallback;
+  }
 
   const STYLE = `
 .cx-root { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
 .cx-toolbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 9px 14px; border-bottom: 1px solid var(--line);
-  background: rgba(7, 11, 20, 0.55); z-index: 6;
+  background: var(--panel); z-index: 6;
 }
-.cx-label { font-size: 11px; color: var(--sub); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
-.cx-tabs { display: flex; gap: 2px; padding: 2px; background: rgba(148, 163, 184, 0.08); border-radius: 8px; }
+.cx-label {
+  font-size: 12px; color: var(--sub); white-space: nowrap;
+  display: flex; align-items: center; gap: 6px;
+}
+.cx-tabs {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+}
 .cx-tab {
   border: 0; background: transparent; color: var(--sub);
   padding: 4px 10px; border-radius: 6px; cursor: pointer;
-  font-family: inherit; font-size: 11.5px; white-space: nowrap; transition: all .15s ease;
+  font-family: inherit; font-size: 12px; white-space: nowrap;
+  transition: background .15s ease, color .15s ease;
 }
-.cx-tab:hover { color: var(--ink); }
-.cx-tab.active { background: rgba(56, 189, 248, 0.17); color: #7dd3fc; box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.3); }
+.cx-tab:hover { color: var(--ink); background: var(--accent-soft); }
+.cx-tab.active {
+  background: var(--accent-soft); color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600;
+}
+.cx-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cx-spacer { flex: 1; }
 .cx-search { position: relative; width: 236px; }
 .cx-search input {
   width: 100%; padding: 7px 11px 7px 29px;
   border-radius: 8px; border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.06); color: var(--ink);
+  background: var(--panel-2); color: var(--ink);
   font-family: inherit; font-size: 12px; outline: none;
 }
-.cx-search input:focus { border-color: rgba(56, 189, 248, 0.55); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1); }
-.cx-search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); opacity: .5; pointer-events: none; }
+.cx-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cx-search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); opacity: .55; pointer-events: none; }
 .cx-btn {
-  border: 1px solid var(--line); background: rgba(148, 163, 184, 0.06);
+  border: 1px solid var(--line); background: var(--panel-2);
   color: var(--ink); border-radius: 8px; padding: 6px 11px;
-  font-family: inherit; font-size: 11.5px; cursor: pointer; white-space: nowrap;
+  font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
 }
-.cx-btn:hover { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: #bae6fd; }
+.cx-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.cx-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cx-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-.cx-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+.cx-stage .view-panel { top: 12px; right: 12px; bottom: 12px; width: 340px; }
+.cx-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  cursor: pointer; outline: none;
+}
+.cx-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .cx-legend {
   position: absolute; left: 14px; bottom: 14px; z-index: 4;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   padding: 9px 12px; width: 232px;
-  backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 40px var(--shadow);
 }
-.cx-legend h4 { margin: 0 0 6px; font-size: 10.5px; color: var(--sub); font-weight: 600; letter-spacing: .3px; }
-.cx-scale { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #22c55e, #f59e0b 55%, #ef4444); }
-.cx-scale-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: var(--sub); }
-.cx-note { margin-top: 6px; font-size: 10px; color: var(--sub); line-height: 1.5; }
+.cx-legend h4 { margin: 0 0 6px; font-size: 11.5px; color: var(--sub); font-weight: 600; letter-spacing: .3px; }
+.cx-scale { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #4d7c0f, #c2830a 55%, #b3261e); }
+.cx-scale-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11.5px; color: var(--sub); }
+.cx-note { margin-top: 6px; font-size: 11.5px; color: var(--sub); line-height: 1.5; }
 .cx-tooltip {
   position: absolute; z-index: 9; pointer-events: none;
-  background: rgba(9, 15, 27, 0.97); border: 1px solid rgba(56, 189, 248, 0.32);
-  border-radius: 9px; padding: 8px 11px; font-size: 11.5px; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 11px; font-size: 12px; color: var(--ink);
   max-width: 340px; opacity: 0; transform: translateY(4px);
   transition: opacity .12s ease, transform .12s ease;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 10px 30px var(--shadow);
 }
 .cx-tooltip.show { opacity: 1; transform: translateY(0); }
-.cx-tooltip .tt-sub { color: var(--sub); font-size: 10.5px; margin-top: 3px; }
+.cx-tooltip .tt-sub { color: var(--sub); font-size: 12px; margin-top: 3px; }
 .cx-bar { display: grid; grid-template-columns: minmax(0, 1fr) 58px 36px; gap: 7px; align-items: center; margin: 5px 0; }
-.cx-bar .cx-name { font-size: 11px; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cx-bar .cx-track { height: 6px; background: rgba(148, 163, 184, 0.12); border-radius: 3px; overflow: hidden; }
-.cx-bar .cx-track i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #22c55e, #f59e0b 60%, #ef4444); }
-.cx-bar b { font-size: 10.5px; color: var(--sub); text-align: right; font-weight: 600; }
+.cx-bar .cx-name { font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-bar .cx-track { height: 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.cx-bar .cx-track i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #4d7c0f, #c2830a 60%, #b3261e); }
+.cx-bar b { font-size: 11.5px; color: var(--sub); text-align: right; font-weight: 600; }
 .cx-bar.click { cursor: pointer; }
-.cx-bar.click:hover .cx-name { color: #7dd3fc; }
+.cx-bar.click:hover .cx-name { color: var(--accent); }
+.cx-bar.click:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 .cx-actions { display: flex; gap: 6px; margin-top: 10px; }
 .cx-actions .cx-btn { flex: 1; }
-.cx-mono { font-family: Consolas, "Cascadia Code", "Courier New", monospace; font-size: 10.5px; color: #a5b4fc; }
+.cx-mono { font-family: var(--mono, Consolas), "Cascadia Code", "Courier New", monospace; font-size: 12px; color: var(--ink); }
 .cx-sig {
-  font-family: Consolas, "Cascadia Code", "Courier New", monospace;
-  font-size: 10.5px; color: #a5b4fc; background: rgba(99, 102, 241, 0.09);
-  border-radius: 6px; padding: 6px 8px; margin: 0 0 10px; word-break: break-word;
+  font-family: var(--mono, Consolas), "Cascadia Code", "Courier New", monospace;
+  font-size: 12px; color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+  margin: 0 0 10px; word-break: break-word;
 }
-.cx-none { color: var(--sub); font-size: 11.5px; }
+.cx-none { color: var(--sub); font-size: 12px; }
 @media (max-width: 1180px) {
   .cx-legend { display: none; }
-  .cx-search { width: 170px; }
+  .cx-search { width: 180px; }
+}
+@media (max-width: 900px) {
+  .cx-stage .view-panel {
+    top: auto; left: 8px; right: 8px; bottom: 8px;
+    width: auto; max-height: 42%;
+  }
+  .cx-search { width: 150px; }
+  .cx-toolbar { gap: 8px; }
 }
 `;
-
-  function esc(v) {
-    return String(v == null ? "" : v).replace(/[&<>"']/g, c => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[c]));
-  }
-
-  function num(v, fallback) {
-    const n = Number(v);
-    return isFinite(n) ? n : (fallback == null ? 0 : fallback);
-  }
-
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-
-  function rgba(hex, alpha) {
-    const raw = String(hex || "").replace("#", "");
-    const h = raw.length === 3 ? raw.split("").map(c => c + c).join("") : raw;
-    const n = parseInt(h, 16);
-    if (!isFinite(n)) return "rgba(148,163,184," + alpha + ")";
-    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
-  }
-
-  function roundRect(c, x, y, w, h, r) {
-    const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-    c.beginPath();
-    c.moveTo(x + rr, y);
-    c.arcTo(x + w, y, x + w, y + h, rr);
-    c.arcTo(x + w, y + h, x, y + h, rr);
-    c.arcTo(x, y + h, x, y, rr);
-    c.arcTo(x, y, x + w, y, rr);
-    c.closePath();
-  }
-
-  function basename(path) {
-    const p = String(path || "");
-    const parts = p.split(/[\\/]/);
-    return parts[parts.length - 1] || p;
-  }
-
-  function shortFile(path) {
-    const p = String(path || "");
-    const parts = p.split(/[\\/]/);
-    return parts.length > 3 ? ".../" + parts.slice(-3).join("/") : p;
-  }
-
-  function mix(hexA, hexB, t) {
-    const pa = parseInt(String(hexA).slice(1), 16);
-    const pb = parseInt(String(hexB).slice(1), 16);
-    const ar = (pa >> 16) & 255;
-    const ag = (pa >> 8) & 255;
-    const ab = pa & 255;
-    const br = (pb >> 16) & 255;
-    const bg = (pb >> 8) & 255;
-    const bb = pb & 255;
-    return "rgb(" + Math.round(ar + (br - ar) * t) + "," + Math.round(ag + (bg - ag) * t) + "," + Math.round(ab + (bb - ab) * t) + ")";
-  }
 
   const NON_FUNCTION = /^(class|module|interface|type|struct|enum|namespace|variable|const|property|field|object|union|trait)$/i;
 
@@ -190,6 +181,8 @@
         signature: s.signature || "",
         doc: s.doc || "",
       };
+      // key 直接就是数组下标：面板里的点击永远回到同一个函数对象。
+      fn.key = "N:" + allFunctions.length;
       allFunctions.push(fn);
       if (!funcsByFile.has(fn.file)) funcsByFile.set(fn.file, []);
       funcsByFile.get(fn.file).push(fn);
@@ -198,9 +191,7 @@
       list.sort((a, b) => (b.branches - a.branches) || (b.lines - a.lines) || a.name.localeCompare(b.name));
     }
     allFunctions.sort((a, b) => (b.branches - a.branches) || (b.lines - a.lines));
-    const fnIndex = new Map();
-    allFunctions.forEach((fn, i) => fnIndex.set(fn, i));
-    const fnKeyOf = fn => "N:" + (fnIndex.has(fn) ? fnIndex.get(fn) : 0);
+    const fnKeyOf = fn => (fn && fn.key) ? fn.key : "N:" + Math.max(0, allFunctions.indexOf(fn));
     const fileKeyOf = f => "F:" + f.path;
 
     function groupLabel(group) {
@@ -244,6 +235,8 @@
       b.className = "cx-tab";
       b.dataset.area = key;
       b.textContent = label;
+      b.title = key === "lines" ? "色块面积按代码行数" : "色块面积按分支数";
+      b.setAttribute("aria-pressed", "false");
       b.addEventListener("click", () => setArea(key));
       areaTabs.appendChild(b);
       areaButtons.push(b);
@@ -263,6 +256,8 @@
       b.className = "cx-tab";
       b.dataset.color = key;
       b.textContent = label;
+      b.title = key === "density" ? "颜色按每 100 行分支数" : "颜色按分支总数";
+      b.setAttribute("aria-pressed", "false");
       b.addEventListener("click", () => setColor(key));
       colorTabs.appendChild(b);
       colorButtons.push(b);
@@ -309,6 +304,9 @@
 
     const canvas = document.createElement("canvas");
     canvas.className = "cx-canvas";
+    canvas.tabIndex = 0;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "复杂度矩形树图：面积表示行数或分支数，颜色越红复杂度越高；点击色块查看文件指标与最复杂函数。");
     stage.appendChild(canvas);
 
     const legend = document.createElement("div");
@@ -316,6 +314,8 @@
     const legendTitle = document.createElement("h4");
     const scale = document.createElement("div");
     scale.className = "cx-scale";
+    // 与画布共用主题里的同一组色阶，避免 CSS / Canvas 两套颜色漂移。
+    scale.style.background = "linear-gradient(90deg, " + SCALE[0] + " 0%, " + SCALE[1] + " 55%, " + SCALE[2] + " 100%)";
     const scaleLabels = document.createElement("div");
     scaleLabels.className = "cx-scale-labels";
     const scaleMin = document.createElement("span");
@@ -338,9 +338,6 @@
 
     const panel = document.createElement("aside");
     panel.className = "view-panel";
-    panel.style.top = "12px";
-    panel.style.right = "12px";
-    panel.style.bottom = "12px";
     const panelHead = document.createElement("div");
     panelHead.className = "view-panel-head";
     const panelTitle = document.createElement("h2");
@@ -387,7 +384,7 @@
     function colorFor(score) {
       const range = state.maxScore - state.minScore;
       const t = range > 1e-9 ? clamp((score - state.minScore) / range, 0, 1) : 1;
-      return t < 0.5 ? mix("#22c55e", "#f59e0b", t * 2) : mix("#f59e0b", "#ef4444", (t - 0.5) * 2);
+      return t < 0.5 ? CV.mix(SCALE[0], SCALE[1], t * 2) : CV.mix(SCALE[1], SCALE[2], (t - 0.5) * 2);
     }
 
     // ---------------- squarified treemap ----------------
@@ -454,7 +451,8 @@
 
     function computeLayout() {
       const vw = viewportW();
-      const vh = state.h;
+      // 窄屏详情面板是底部抽屉，treemap 只铺满上方可视区。
+      const vh = state.w <= 900 ? Math.max(200, state.h * 0.56) : state.h;
       state.tiles = [];
       state.groupRects = [];
       if (!vw || !vh) return;
@@ -526,15 +524,15 @@
       const c = canvasCtx;
       c.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
       const bg = c.createLinearGradient(0, 0, state.w, state.h);
-      bg.addColorStop(0, "#070b14");
-      bg.addColorStop(0.55, "#0a1322");
-      bg.addColorStop(1, "#0b1729");
+      bg.addColorStop(0, THEME.bg0);
+      bg.addColorStop(0.55, THEME.bg1);
+      bg.addColorStop(1, THEME.bg2);
       c.fillStyle = bg;
       c.fillRect(0, 0, state.w, state.h);
 
       if (!state.tiles.length) {
-        c.fillStyle = "rgba(139,156,182,0.85)";
-        c.font = '12px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+        c.fillStyle = THEME.sub;
+        c.font = '12px ' + CV.FONT;
         c.textAlign = "center";
         c.textBaseline = "middle";
         c.fillText("没有可绘制的文件指标", viewportW() / 2, state.h / 2);
@@ -549,7 +547,7 @@
       if (!state.query) return true;
       const q = state.query;
       if (f.path.toLowerCase().indexOf(q) >= 0) return true;
-      if (basename(f.path).toLowerCase().indexOf(q) >= 0) return true;
+      if (CV.basename(f.path).toLowerCase().indexOf(q) >= 0) return true;
       const list = funcsByFile.get(f.path) || [];
       for (const fn of list) {
         if (String(fn.name).toLowerCase().indexOf(q) >= 0) return true;
@@ -559,20 +557,21 @@
 
     function drawGroup(c, g) {
       const matches = !state.query || g.files.some(matchQuery);
-      c.globalAlpha = matches ? 1 : 0.28;
-      c.fillStyle = "rgba(15,23,42,0.55)";
-      roundRect(c, g.x, g.y, g.w, g.h, 8);
+      c.globalAlpha = matches ? 1 : 0.3;
+      // 近白底 + 浅描边，让分组在浅色画布上「浮」起来而不抢色块颜色。
+      c.fillStyle = CV.tint(THEME.bg1, 0.55);
+      CV.roundRect(c, g.x, g.y, g.w, g.h, 8);
       c.fill();
-      c.strokeStyle = matches ? "rgba(148,163,184,0.28)" : "rgba(148,163,184,0.1)";
+      c.strokeStyle = matches ? THEME.line : CV.rgba(THEME.ink, 0.06);
       c.lineWidth = 1;
       c.stroke();
       if (g.w > 82 && g.h > 24) {
-        c.fillStyle = matches ? "rgba(191,219,254,0.78)" : "rgba(191,219,254,0.25)";
-        c.font = '600 10.5px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+        c.fillStyle = CV.rgba(THEME.ink, matches ? 0.72 : 0.28);
+        c.font = '600 11.5px ' + CV.FONT;
         c.textAlign = "left";
         c.textBaseline = "middle";
         const label = groupLabel(g.key) + " · " + g.files.length;
-        c.fillText(ellipsize(c, label, g.w - 16), g.x + 7, g.y + 11);
+        c.fillText(CV.ellipsize(c, label, g.w - 16), g.x + 7, g.y + 11);
       }
       c.globalAlpha = 1;
     }
@@ -582,39 +581,33 @@
       const active = state.selectedPath === f.path;
       const hover = state.hover && state.hover.file && state.hover.file.path === f.path;
       const matched = matchQuery(f);
-      const alpha = (state.query && !matched) ? 0.1 : 1;
+      const alpha = (state.query && !matched) ? 0.12 : 1;
+      const base = colorFor(scoreOf(f));
       c.globalAlpha = alpha;
 
-      roundRect(c, t.x + 1, t.y + 1, Math.max(1, t.w - 2), Math.max(1, t.h - 2), 4);
-      c.fillStyle = colorFor(scoreOf(f));
-      c.globalAlpha = alpha * (hover ? 1 : 0.86);
+      // 浅色主题：色阶先和白色混合成柔和的底色，再加深色描边保证边界可辨。
+      CV.roundRect(c, t.x + 1, t.y + 1, Math.max(1, t.w - 2), Math.max(1, t.h - 2), 4);
+      c.fillStyle = CV.tint(base, hover ? 0.58 : 0.68);
       c.fill();
+      c.strokeStyle = CV.rgba(CV.mix(base, THEME.ink, 0.2), hover ? 0.65 : 0.42);
+      c.lineWidth = 1;
+      c.stroke();
 
       if (active || hover) {
-        c.globalAlpha = alpha;
-        c.strokeStyle = active ? "#e5ecf7" : "rgba(229,236,247,0.78)";
+        c.strokeStyle = active ? THEME.accent : CV.rgba(THEME.ink, 0.5);
         c.lineWidth = active ? 2 : 1.2;
-        roundRect(c, t.x + 1.5, t.y + 1.5, Math.max(1, t.w - 3), Math.max(1, t.h - 3), 4);
+        CV.roundRect(c, t.x + 1.5, t.y + 1.5, Math.max(1, t.w - 3), Math.max(1, t.h - 3), 4);
         c.stroke();
       }
 
       if (t.w > 54 && t.h > 20) {
-        c.globalAlpha = alpha;
-        c.font = '600 10.5px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+        c.font = '600 11.5px ' + CV.FONT;
         c.textAlign = "center";
         c.textBaseline = "middle";
-        c.fillStyle = "rgba(7,11,20,0.8)";
-        c.fillText(ellipsize(c, basename(f.path), t.w - 12), t.x + t.w / 2, t.y + t.h / 2);
+        c.fillStyle = CV.rgba(THEME.ink, 0.86);
+        c.fillText(CV.ellipsize(c, CV.basename(f.path), t.w - 12), t.x + t.w / 2, t.y + t.h / 2);
       }
       c.globalAlpha = 1;
-    }
-
-    function ellipsize(c, text, maxW) {
-      const str = String(text == null ? "" : text);
-      if (c.measureText(str).width <= maxW) return str;
-      let t = str;
-      while (t.length > 1 && c.measureText(t + "…").width > maxW) t = t.slice(0, -1);
-      return t + "…";
     }
 
     // ---------------- 右侧面板 ----------------
@@ -657,7 +650,8 @@
       state.selectedPath = null;
       state.selectedFnId = null;
       panelTitle.textContent = "复杂度概览";
-      panelBadge.innerHTML = '<i style="background:#f59e0b;color:#f59e0b"></i><span>AST 指标</span>';
+      const badgeColor = safeColor(SCALE[1], THEME.accent);
+      panelBadge.innerHTML = '<i style="background:' + badgeColor + ";color:" + badgeColor + '"></i><span>AST 指标</span>';
       const totalLines = files.reduce((s, f) => s + f.lines, 0);
       const totalBranches = files.reduce((s, f) => s + f.branches, 0);
       const totalFunctions = files.reduce((s, f) => s + funcCount(f), 0);
@@ -673,12 +667,12 @@
         "</div></div>");
       parts.push('<div class="section"><h3>分支最多的文件</h3>' +
         (topFiles.length
-          ? topFiles.map(f => barRow(fileKeyOf(f), basename(f.path), f.path, f.branches, topFiles[0].branches, { click: true })).join("")
+          ? topFiles.map(f => barRow(fileKeyOf(f), CV.basename(f.path), f.path, f.branches, topFiles[0].branches, { click: true })).join("")
           : '<span class="cx-none">无文件数据</span>') +
         "</div>");
       parts.push('<div class="section"><h3>分支最多的函数</h3>' +
         (topFns.length
-          ? topFns.map(fn => barRow(fnKeyOf(fn), fn.name + " · " + shortFile(fn.file) + ":" + fn.line, fn.name, fn.branches, topFns[0].branches || 1, { click: true, fn: true })).join("")
+          ? topFns.map(fn => barRow(fnKeyOf(fn), fn.name + " · " + CV.shortPath(fn.file, 3) + ":" + fn.line, fn.name, fn.branches, topFns[0].branches || 1, { click: true, fn: true })).join("")
           : '<span class="cx-none">data.symbols 中没有函数级数据</span>') +
         "</div>");
       panelBody.innerHTML = parts.join("");
@@ -691,8 +685,9 @@
       const list = funcsByFile.get(f.path) || [];
       const top = list.slice(0, 10);
       const max = top.length ? Math.max(1, top[0].branches) : 1;
-      panelTitle.textContent = basename(f.path);
-      panelBadge.innerHTML = '<i style="background:' + colorFor(scoreOf(f)) + ";color:" + colorFor(scoreOf(f)) + '"></i><span>' +
+      panelTitle.textContent = CV.basename(f.path);
+      const badgeColor = safeColor(colorFor(scoreOf(f)), THEME.accent);
+      panelBadge.innerHTML = '<i style="background:' + badgeColor + ";color:" + badgeColor + '"></i><span>' +
         esc(groupLabel(f.group)) + "</span>";
       const parts = [];
       parts.push('<p class="pathline">' + esc(f.path) + "</p>");
@@ -731,7 +726,8 @@
       state.selectedPath = fn.file || state.selectedPath;
       const file = filesByPath.get(fn.file) || null;
       panelTitle.textContent = fn.name;
-      panelBadge.innerHTML = '<i style="background:#ef4444;color:#ef4444"></i><span>函数</span>';
+      const badgeColor = safeColor(SCALE[2], THEME.accent);
+      panelBadge.innerHTML = '<i style="background:' + badgeColor + ";color:" + badgeColor + '"></i><span>函数</span>';
       const densityValue = fn.lines ? (fn.branches / Math.max(1, fn.lines) * 100).toFixed(1) : "—";
       const verdict = fn.branches >= 25
         ? "分支较多：改动前先确认调用方与测试覆盖，考虑拆分函数。"
@@ -783,19 +779,21 @@
       const filesHit = files.filter(f => f.path.toLowerCase().indexOf(q) >= 0).slice(0, 8);
       const fnHit = allFunctions.filter(fn => (fn.name + " " + fn.qualified + " " + fn.file).toLowerCase().indexOf(q) >= 0).slice(0, 10);
       panelTitle.textContent = "搜索：" + rawQuery.trim();
-      panelBadge.innerHTML = '<i style="background:#38bdf8;color:#38bdf8"></i><span>' + (filesHit.length + fnHit.length) + " 项匹配</span>";
+      const badgeColor = safeColor(THEME.accent, THEME.accent);
+      panelBadge.innerHTML = '<i style="background:' + badgeColor + ";color:" + badgeColor + '"></i><span>' +
+        (filesHit.length + fnHit.length) + " 项匹配</span>";
       const parts = [];
       if (!filesHit.length && !fnHit.length) {
         parts.push('<span class="cx-none">没有匹配的文件或函数，试试文件名 / 函数名的一部分。</span>');
       } else {
         parts.push('<div class="section"><h3>文件（' + filesHit.length + "）</h3>" +
           (filesHit.length
-            ? filesHit.map(f => barRow(fileKeyOf(f), basename(f.path), f.path, f.branches, Math.max(1, filesHit[0].branches), { click: true })).join("")
+            ? filesHit.map(f => barRow(fileKeyOf(f), CV.basename(f.path), f.path, f.branches, Math.max(1, filesHit[0].branches), { click: true })).join("")
             : '<span class="cx-none">无</span>') +
           "</div>");
         parts.push('<div class="section"><h3>函数（' + fnHit.length + "）</h3>" +
           (fnHit.length
-            ? fnHit.map(fn => barRow(fnKeyOf(fn), fn.name + " · " + shortFile(fn.file) + ":" + fn.line, fn.name, fn.branches, Math.max(1, fnHit[0].branches), { click: true, fn: true })).join("")
+            ? fnHit.map(fn => barRow(fnKeyOf(fn), fn.name + " · " + CV.shortPath(fn.file, 3) + ":" + fn.line, fn.name, fn.branches, Math.max(1, fnHit[0].branches), { click: true, fn: true })).join("")
             : '<span class="cx-none">无</span>') +
           "</div>");
       }
@@ -826,10 +824,9 @@
       const f = t.file;
       if (tooltip.dataset.path !== f.path) {
         tooltip.dataset.path = f.path;
-        tooltip.innerHTML = "<b>" + esc(basename(f.path)) + "</b>" +
-          '<div class="tt-sub">' + esc(shortFile(f.path)) + "</div>" +
+        tooltip.innerHTML = "<b>" + esc(CV.basename(f.path)) + "</b>" +
+          '<div class="tt-sub">' + esc(CV.shortPath(f.path, 3)) + "</div>" +
           '<div class="tt-sub">' + f.lines + " 行 · " + funcCount(f) + " 函数 · " + f.branches + " 分支 · 密度 " + density(f).toFixed(1) + "</div>";
-        tooltip.style.borderColor = "rgba(56,189,248,0.32)";
       }
       tooltip.classList.add("show");
       const rect = tooltip.getBoundingClientRect();
@@ -874,7 +871,11 @@
     function setArea(key) {
       if (state.area === key) return;
       state.area = key;
-      for (const b of areaButtons) b.classList.toggle("active", b.dataset.area === key);
+      for (const b of areaButtons) {
+        const on = b.dataset.area === key;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
       computeLayout();
       requestDraw();
     }
@@ -882,18 +883,38 @@
     function setColor(key) {
       if (state.color === key) return;
       state.color = key;
-      for (const b of colorButtons) b.classList.toggle("active", b.dataset.color === key);
+      for (const b of colorButtons) {
+        const on = b.dataset.color === key;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
       computeLayout();
       requestDraw();
     }
 
-    searchInput.addEventListener("input", () => {
+    // 搜索去抖：输入停顿后才做文件 / 函数全量匹配。
+    const SEARCH_DEBOUNCE = 120;
+    let searchTimer = 0;
+
+    function applySearch() {
       state.query = searchInput.value.trim().toLowerCase();
       renderSearch(searchInput.value);
       requestDraw();
+    }
+
+    searchInput.addEventListener("input", () => {
+      window.clearTimeout(searchTimer);
+      if (!searchInput.value.trim()) {
+        state.query = "";
+        renderOverview();
+        requestDraw();
+        return;
+      }
+      searchTimer = window.setTimeout(applySearch, SEARCH_DEBOUNCE);
     });
     searchInput.addEventListener("keydown", e => {
       if (e.key === "Escape") {
+        window.clearTimeout(searchTimer);
         searchInput.value = "";
         state.query = "";
         const keep = state.selectedPath ? filesByPath.get(state.selectedPath) : null;
@@ -901,6 +922,9 @@
         else renderOverview();
         requestDraw();
       } else if (e.key === "Enter") {
+        // 回车立即结算当前输入并打开第一条函数结果。
+        window.clearTimeout(searchTimer);
+        if (searchInput.value.trim()) applySearch();
         const target = panelBody.querySelector('.cx-bar.click[data-fn="1"]');
         if (target) target.click();
       }
@@ -913,7 +937,8 @@
       const h = Math.round(rect.height);
       state.w = w;
       state.h = h;
-      state.dpr = Math.max(1, window.devicePixelRatio || 1);
+      // 高分屏封顶 2 倍，避免大画布吃掉过多内存。
+      state.dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
       if (canvas.width !== Math.round(w * state.dpr) || canvas.height !== Math.round(h * state.dpr)) {
         canvas.width = Math.round(w * state.dpr);
         canvas.height = Math.round(h * state.dpr);
@@ -935,8 +960,16 @@
     }
 
     function initialTabState() {
-      for (const b of areaButtons) b.classList.toggle("active", b.dataset.area === state.area);
-      for (const b of colorButtons) b.classList.toggle("active", b.dataset.color === state.color);
+      for (const b of areaButtons) {
+        const on = b.dataset.area === state.area;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      for (const b of colorButtons) {
+        const on = b.dataset.color === state.color;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
     }
 
     function activate(params) {
@@ -970,6 +1003,7 @@
     function deactivate() {
       state.visible = false;
       state.hover = null;
+      window.clearTimeout(searchTimer);
       tooltip.classList.remove("show");
     }
 

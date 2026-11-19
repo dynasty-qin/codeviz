@@ -11,7 +11,7 @@ node id verbatim, which is what makes the ``calls`` edges line up.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -20,7 +20,6 @@ from ..config import match_module
 from ..metrics import python_ast
 from ..model import SCHEMA, warn
 
-TZ = timezone(timedelta(hours=8))
 SYMBOL_KINDS = ("function", "method")
 ENTRY_EDGE_KINDS = ("references", "calls")
 
@@ -248,7 +247,7 @@ def build_data(project_path: str | Path, config: dict) -> dict:
         "project": {
             "name": config.get("project", {}).get("name") or root.name or "codeviz",
             "root": root.as_posix(),
-            "generated_at": datetime.now(TZ).isoformat(timespec="seconds"),
+            "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         },
         "index": {
             "database": database_label,

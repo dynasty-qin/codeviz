@@ -6,7 +6,7 @@
 codeviz build <project> --out .codeviz --format site|single-file
 ```
 
-一个命令读取 `<project>/.codegraph/codegraph.db`（或一份 `codeviz/v1` JSON），聚合模块依赖、文件调用关系、入口路由和函数复杂度（分支 / `except` / 行数），生成带语义缩放、URL 深链和源码预览的单页应用。产物无 CDN、无后端、无需联网，默认写到 `<project>/.codeviz/index.html`，双击即开；`--format single-file` 则打成单个 HTML，方便通过 IM / 邮件分发。
+一个命令读取 `<project>/.codegraph/codegraph.db`（或一份 `codeviz/v1` JSON），聚合模块依赖、文件调用关系、入口路由和函数复杂度（分支 / `except` / 行数），生成带语义缩放、URL 深链和源码预览的单页应用。产物无 CDN、无后端、无需联网，默认写到 `<project>/.codeviz/index.html`，双击即开；`--format single-file` 则打成单个 HTML，方便通过 IM / 邮件分发。界面使用浅色护眼主题（暖白背景、低饱和配色、≥12px 字号），并支持键盘操作与窄屏底部面板。
 
 - 输入：任意 CodeGraph 已索引项目（`.codegraph/codegraph.db`），或一份 `codeviz/v1` JSON。
 - 输出：默认 `<project>/.codeviz/index.html`，无 CDN、无后端、双击即开。
@@ -65,6 +65,8 @@ codeviz build .
 codeviz build . --out ./docs/arch --format single-file   # 单 HTML，方便发同事
 codeviz build . --config ./codeviz.json                 # 显式指定配置
 codeviz build . --open                                  # 生成后打开浏览器
+codeviz build . --no-data-json                          # 不写 assets/viz-data.json，减小产物体积
+codeviz build . --no-root                               # project.root 留空，避免产物泄漏本机路径
 codeviz validate ./data.json                            # 校验一份 codeviz/v1 数据（也支持 data.js）
 ```
 
@@ -113,19 +115,20 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 | `schema` | 否 | 固定 `codeviz/v1`；缺省按 v1 处理 |
 | `project.name` | 否 | 站点标题；缺省取目录名 |
 | `project.description` | 否 | 首页副标题 |
+| `project.hide_root` | 否 | 为 `true` 时产物里的 `project.root` 留空（等价 CLI `--no-root`），避免分享时泄漏本机路径 |
 | `index.database` | 否 | CodeGraph 库路径，相对项目根，默认 `.codegraph/codegraph.db` |
 | `groups` | 否 | 分组元数据：`label`（中文名）、`color`（`#RRGGBB`） |
-| `defaults.id` / `defaults.group` | 否 | 未命中任何 `modules` 规则时的兜底，默认 `{dir}` / `other` |
+| `defaults.id` / `defaults.group` / `defaults.label` / `defaults.desc` | 否 | 未命中任何 `modules` 规则时的兜底，默认 `{dir}` / `other` |
 | `modules[]` | 否 | 模块映射规则，按顺序匹配，**第一条命中生效** |
 | `modules[].glob` | 是 | 相对项目根的 glob，如 `server/services/*.py`、`mobile/**/*` |
 | `modules[].id` | 否 | 模块 id 模板，同模块的文件会聚合为一个节点 |
 | `modules[].label` | 否 | 模块显示名模板 |
 | `modules[].group` | 否 | 所属分组，对应 `groups` 的 key |
-| `metrics.language` | 否 | 本轮只支持 `python`；其他语言只做结构不做指标 |
+| `metrics.language` | 否 | 目前只支持 `python`；其他语言只做结构不做指标 |
 | `metrics.source_lines` | 否 | 符号源码片段最大行数，默认 60（同时受 4000 字符上限约束） |
 | `metrics.source_chars` | 否 | 源码片段最大字符数，默认 4000 |
-| `metrics.include_source` | 否 | 是否附带 `source`，默认 `true`；代码敏感时设为 `false` |
-| `exclude` | 否 | 额外排除的 glob 列表；缺省已排除 `.git/` `.venv/` `node_modules/` `__pycache__/` `.codeviz/` 等 |
+| `metrics.include_source` | 否 | 是否附带 `source`，默认 `true`；代码敏感或产物过大时设为 `false` |
+| `exclude` | 否 | **额外**排除的 glob 列表，会与默认的 `.codeviz/**` 合并；CodeGraph 本身不会索引 `.git/` `.venv/` `node_modules/` 等 |
 | `data` | 否 | 直接指定一份 `codeviz/v1` JSON（跳过 CodeGraph 适配器） |
 | `overlays[]` | 否 | 覆盖层，见第 5 节 |
 
@@ -187,12 +190,14 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 ```
 .codeviz/
   index.html
+  .codeviz-output      # 构建标记：再次构建时据此安全清理 assets/
   assets/
     data.js            # window.CODEVIZ_DATA = { ...codeviz/v1... }
-    viz-data.json      # 同一份数据的纯 JSON（便于校验 / 二次处理）
+    viz-data.json      # 同一份数据的纯 JSON（--no-data-json 可关闭）
     app.js             # SPA 外壳：tab / hash 路由 / 源码侧栏 / toast
-    styles.css
+    styles.css         # 浅色主题样式与设计 token
     views/
+      common.js        # 共享工具函数、主题 token、视图注册队列
       source.js
       deps.js
       calls.js
@@ -201,7 +206,13 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
     assets/            # 覆盖层图片（从项目内拷贝，路径见 overlays[].image）
 ```
 
-`index.html` 按固定顺序加载脚本，全部是相对路径，可直接拷走 / 内网静态托管 / `file://` 打开。
+`index.html` 按固定顺序加载脚本（`data.js` → `views/common.js` → 各视图 → `app.js`），全部是相对路径，可直接拷走 / 内网静态托管 / `file://` 打开。
+
+构建会先清空 `<out>/assets/` 再写入。为防止误删，只有当该目录为空、带有 `.codeviz-output` 标记、或其中的 `data.js` 是 codeviz 产物时才会清理；`--out` 不允许等于项目根目录，也不能是项目根的上级目录。
+
+### 主题与样式
+
+界面固定为浅色护眼主题：暖白背景（`#f7f8f4`）、低饱和分组色、柔和阴影、正文不小于 12px。设计 token 定义在 `styles.css` 的 `:root`，并同步到 `views/common.js` 的 `CVTheme`（Canvas 绘制使用后者）；改主题时两处一起改。窄屏（≤900px）下面板变为底部抽屉，工具栏自动换行，图表支持点按/滚轮/双指缩放。
 
 ### `--format single-file`
 
@@ -241,7 +252,7 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
 
 ## 7. 二次开发：新增一个视图
 
-视图是独立的 ES 脚本，只操作自己的 `container`，不改 `index.html` 结构。
+视图是独立的 ES 脚本，只操作自己的 `container`，不改 `index.html` 结构。视图脚本在 `common.js` 之后、`app.js` 之前加载，因此 `window.CodeViz.registerView` 和 `window.CV` 一定可用。
 
 1. 在 `codeviz/web/views/` 新建 `myview.js`，注册：
 
@@ -268,10 +279,11 @@ codeviz build . --config codeviz.json --out ./.codeviz --open
    });
    ```
 
-2. 在 `codeviz/web/index.html` 里按顺序加 `<script src="assets/views/myview.js"></script>`（在 `app.js` 之前）。
-3. 在 `app.js` 的 tab 表里登记 `myview`（名称 / 图标 / 标题）。
-4. 在 `pyproject.toml` 的 `package-data` 里确认 `web/views/*` 会被打进包（已包含）。
-5. 加测试：`tests/test_render.py` 断言 `assets/views/myview.js` 存在，并补一个深链用例。
+2. 在 `codeviz/web/index.html` 里按顺序加 `<script src="assets/views/myview.js"></script>`（放在 `views/common.js` 之后、`app.js` 之前）。
+3. 在 `app.js` 的 tab 表里登记 `myview`（名称 / 标题）。
+4. 复用 `window.CV` 的 `esc / clamp / rgba / roundRect / ellipsize` 与 `window.CVTheme` 的浅色 token，不要各写一套。
+5. 在 `pyproject.toml` 的 `package-data` 里确认 `web/views/*` 会被打进包（已包含）。
+6. 加测试：`tests/test_render.py` 断言 `assets/views/myview.js` 存在，并补一个深链用例。
 
 外壳提供的能力：
 
@@ -298,19 +310,21 @@ python -m pytest -q
 python -m pytest tests/test_render.py -q
 ```
 
-当前 52 个用例，不到 1 秒跑完；不需要安装或运行 `codegraph`（测试用 `tests/_codegraph_fixture.py` 现场生成索引库）。
-CI（`.github/workflows/tests.yml`）在 Python 3.10 / 3.11 / 3.12 上执行同一命令。
+当前 79 个用例，约 1 秒跑完；不需要安装或运行 `codegraph`（测试用 `tests/_codegraph_fixture.py` 现场生成索引库）。
+CI（`.github/workflows/tests.yml`）在 Ubuntu 的 Python 3.10 / 3.11 / 3.12 和 Windows 3.12 上执行同一命令，
+并额外用 `node --check` 检查所有 `codeviz/web/**/*.js`。
 
 测试分类：
 
 | 文件 | 覆盖 |
 |---|---|
-| `test_config.py` | JSON / YAML 加载、glob 规则、`{stem}`/`{dir}`/`{rel}` 模板、默认规则、Windows 路径 |
+| `test_config.py` | JSON / YAML 加载、glob 规则、`{stem}`/`{dir}`/`{rel}` 模板、默认规则与 `defaults.label/desc`、`exclude` 合并、Windows 路径 |
 | `test_metrics.py` | 分支数、`except` 数、行数、源码截断、`scan_symbol` |
+| `test_model.py` | `codeviz/v1` 结构校验、calls/entries 引用完整性、分组颜色格式 |
 | `test_codegraph_adapter.py` | 临时目录最小 `codegraph.db` → modules/files/symbols/calls/entries/moduleEdges |
 | `test_generic_adapter.py` | 通用 `codeviz/v1` JSON |
-| `test_render.py` | site / single-file 输出、`window.CODEVIZ_DATA`、空数据容错 |
-| `test_cli.py` | `codeviz build` / `--format` / 默认输出目录 / `validate` |
+| `test_render.py` | site / single-file 输出、`window.CODEVIZ_DATA`、输出目录防误删、`--no-data-json` / `--no-root`、空数据容错 |
+| `test_cli.py` | `codeviz build` / `--format` / 默认输出目录 / `validate` / 新开关 |
 | `test_demo_project.py` | 示例项目可运行、配置覆盖全部文件 |
 
 测试用的索引库由 `tests/_codegraph_fixture.py` 用 `sqlite3` 现场生成（字段与真实 CodeGraph 库一致），
@@ -318,10 +332,12 @@ CI（`.github/workflows/tests.yml`）在 Python 3.10 / 3.11 / 3.12 上执行同�
 
 ## 9. 已知限制
 
-- CodeGraph 的 Python 抽取只覆盖常见结构；`getattr` / 动态导入 / FastAPI 依赖注入可能形成未解析边，本轮不展示。
+- CodeGraph 的 Python 抽取只覆盖常见结构；`getattr` / 动态导入 / FastAPI 依赖注入可能形成未解析边，目前不展示。
 - 指标只对磁盘上能读到的 Python 源码生效；文件被删除时对应符号没有 `source`。
 - 入口（`entries`）依赖 CodeGraph 的 `route` 节点及其 `references` 边；没有路由概念的项目会得到空 `entries`。
 - 分支数按 AST 结构统计（`if` / `for` / `while` / `try` 等），跨实现对比时以同一版本为准。
+- 每个符号默认内嵌最多 60 行 / 4000 字符源码，大仓库的 `data.js` 可能达到几十 MB；可用 `metrics.include_source=false` 或 `metrics.source_lines` 控制，并用 `--no-data-json` 避免重复写一份 JSON。
+- 前端目前只有 `node --check` 语法检查与人工冒烟，Canvas 交互没有自动化测试。
 
 ## 10. 目录结构
 
@@ -331,10 +347,12 @@ codeviz/
   CONTRACT.md          # 接口基线
   pyproject.toml
   README.md
+  .gitattributes       # 统一 LF，避免 Windows CRLF 抖动
+  .editorconfig
   codeviz/
     cli.py             # argparse 入口
     config.py          # 配置加载 / 模块映射
-    model.py           # 数据契约辅助
+    model.py           # 数据契约辅助与校验
     adapters/
       codegraph.py     # SQLite -> codeviz/v1
       generic.py       # codeviz/v1 JSON 直读
@@ -342,8 +360,11 @@ codeviz/
       python_ast.py    # 分支 / except / 行数 / 源码片段
     graph.py           # 模块 / 文件聚合、调用链、entries
     overlays.py        # 覆盖层校验 / 图片拷贝
-    render.py          # site / single-file 输出
+    render.py          # site / single-file 输出、输出目录保护
     web/               # SPA 外壳与视图
+      styles.css       # 浅色主题 token 与全局样式
+      views/
+        common.js      # CV 工具函数 / CVTheme / 视图注册队列
   tests/               # pytest
     _codegraph_fixture.py  # 现场生成最小 CodeGraph 索引库
   examples/demo/       # 12 文件示例项目 + codeviz.json

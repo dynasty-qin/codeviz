@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
 <title>codeviz · 架构可视化</title>
 <link rel="stylesheet" href="assets/styles.css">
 </head>
@@ -10,13 +11,13 @@
 <div class="app">
   <header class="topbar">
     <div class="brand">
-      <div class="logo"></div>
+      <div class="logo" aria-hidden="true"></div>
       <div>
         <h1 id="brand-title">codeviz</h1>
         <p id="brand-sub">CodeGraph · 架构 / 调用 / 复杂度</p>
       </div>
     </div>
-    <nav class="tabs" id="tabs"></nav>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="视图切换"></nav>
     <div class="spacer"></div>
     <div class="hint" id="global-hint">点击顶部视图切换 · 支持 URL 深链</div>
   </header>
@@ -24,26 +25,27 @@
   <main class="stage">
     <div id="view-root"></div>
 
-    <aside class="source-panel" id="source-panel">
+    <aside class="source-panel" id="source-panel" aria-label="源码面板" aria-hidden="true">
       <header class="source-head">
         <div>
           <h2 id="source-title">源码</h2>
           <p id="source-meta"></p>
         </div>
         <div class="source-actions">
-          <button class="icon-btn" id="source-copy" title="复制路径">复制</button>
-          <a class="icon-btn" id="source-vscode" href="#" title="在 VS Code 打开">VS Code</a>
-          <button class="icon-btn" id="source-close" title="关闭">关闭</button>
+          <button class="icon-btn" id="source-copy" type="button" title="复制路径" aria-label="复制文件路径">复制</button>
+          <a class="icon-btn" id="source-vscode" href="#" title="在 VS Code 打开" aria-label="在 VS Code 中打开">VS Code</a>
+          <button class="icon-btn" id="source-close" type="button" title="关闭" aria-label="关闭源码面板">关闭</button>
         </div>
       </header>
-      <pre class="source-code"><code id="source-code"></code></pre>
+      <pre class="source-code" tabindex="0" aria-label="源码内容"><code id="source-code"></code></pre>
     </aside>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   </main>
 </div>
 
 <script src="assets/data.js"></script>
+<script src="assets/views/common.js"></script>
 <script src="assets/views/source.js"></script>
 <script src="assets/views/deps.js"></script>
 <script src="assets/views/calls.js"></script>

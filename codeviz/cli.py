@@ -2,7 +2,8 @@
 
 Commands::
 
-    codeviz build [PATH] --out .codeviz --config codeviz.json --format site|single-file [--open]
+    codeviz build [PATH] --out .codeviz --config codeviz.json --format site|single-file \
+        [--open] [--no-data-json] [--no-root]
     codeviz validate [DATA.json|DATA.js]
 
 ``PATH`` may be a project directory (with a ``.codegraph/codegraph.db`` index or
@@ -13,8 +14,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("codeviz")
+except PackageNotFoundError:  # 直接从源码目录运行，未 pip install
+    __version__ = "0.1.0"
 
 
 def main(argv=None) -> int:
@@ -36,6 +41,20 @@ def main(argv=None) -> int:
         help="site: 多文件静态站点（默认）；single-file: 单 HTML，内联全部资源",
     )
     build.add_argument("--open", action="store_true", dest="open_browser", help="构建完成后打开浏览器")
+    build.add_argument(
+        "--no-data-json",
+        action="store_false",
+        dest="write_data_json",
+        default=True,
+        help="不生成 assets/viz-data.json（仍生成 assets/data.js）",
+    )
+    build.add_argument(
+        "--no-root",
+        action="store_true",
+        dest="hide_root",
+        default=False,
+        help="不写入项目绝对路径（project.root 置空）",
+    )
 
     validate = sub.add_parser("validate", help="校验 codeviz/v1 数据文件（.json 或 data.js）")
     validate.add_argument("data", help="数据文件路径")
@@ -54,6 +73,8 @@ def main(argv=None) -> int:
                 config_path=args.config,
                 output_format=args.format,
                 open_browser=args.open_browser,
+                write_data_json=args.write_data_json,
+                hide_root=args.hide_root,
             )
         except KeyboardInterrupt:
             print("已取消", file=sys.stderr)

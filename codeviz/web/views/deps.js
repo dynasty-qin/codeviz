@@ -6,70 +6,15 @@
   // 只用 Canvas 2D 绘制，不依赖任何外部库；所有 DOM 都放在 ctx.container 内。
 
   const TAU = Math.PI * 2;
-  const FONT = '"Microsoft YaHei","PingFang SC",system-ui,-apple-system,"Segoe UI",sans-serif';
-  const MONO = 'Consolas,"Cascadia Code","Courier New",monospace';
-  const FALLBACK_PALETTE = [
-    "#38bdf8", "#34d399", "#f59e0b", "#a78bfa", "#f472b6",
-    "#22d3ee", "#fb7185", "#facc15", "#4ade80", "#818cf8",
-  ];
-  const DEFAULT_COLOR = "#94a3b8";
+  const CV = window.CV;
+  const TH = window.CVTheme;
+  const FONT = CV.FONT;
+  const MONO = CV.MONO;
+  const clamp = CV.clamp;
+  const toNum = CV.toNum;
+  // 只接受合法十六进制色值，避免把数据里的字符串直接拼进 style / canvas
+  const COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
   const MAX_LAYERS = 7;
-
-  function clamp(v, a, b) {
-    return v < a ? a : (v > b ? b : v);
-  }
-
-  function toNum(v, d) {
-    const n = typeof v === "number" ? v : Number(v);
-    return Number.isFinite(n) ? n : (d || 0);
-  }
-
-  function esc(v) {
-    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
-      return {
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-      }[c];
-    });
-  }
-
-  function basename(p) {
-    const s = String(p == null ? "" : p);
-    const parts = s.split(/[\\/]/);
-    return parts[parts.length - 1] || s;
-  }
-
-  function shortPath(p) {
-    const s = String(p == null ? "" : p).replace(/\\/g, "/");
-    const parts = s.split("/");
-    return parts.length > 4 ? "…/" + parts.slice(-4).join("/") : s;
-  }
-
-  function hashStr(s) {
-    let h = 5381;
-    const str = String(s);
-    for (let i = 0; i < str.length; i++) h = (h * 33 + str.charCodeAt(i)) | 0;
-    return Math.abs(h);
-  }
-
-  function rgba(color, a) {
-    const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(color || ""));
-    if (!m) return String(color || DEFAULT_COLOR);
-    let h = m[1];
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    const n = parseInt(h, 16);
-    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
-  }
-
-  function roundRect(c, x, y, w, h, r) {
-    const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-    c.beginPath();
-    c.moveTo(x + rr, y);
-    c.arcTo(x + w, y, x + w, y + h, rr);
-    c.arcTo(x + w, y + h, x, y + h, rr);
-    c.arcTo(x, y + h, x, y, rr);
-    c.arcTo(x, y, x + w, y, rr);
-    c.closePath();
-  }
 
   function overlapRect(a, b) {
     return a.x < b.x + b.w + 4 && a.x + a.w + 4 > b.x &&
@@ -77,10 +22,14 @@
   }
 
   const STYLE = `
-.dv-root { position: absolute; inset: 0; }
+.dv-root { position: absolute; inset: 0; color: var(--ink, #24302c); }
 .dv-canvas {
   position: absolute; inset: 0; display: block; width: 100%; height: 100%;
-  cursor: grab; touch-action: none; z-index: 1;
+  cursor: grab; touch-action: none; z-index: 1; outline: none;
+}
+.dv-canvas:focus-visible {
+  outline: 2px solid var(--accent, #2f7a68);
+  outline-offset: -3px; border-radius: 6px;
 }
 .dv-canvas.dv-grabbing { cursor: grabbing; }
 
@@ -95,176 +44,141 @@
 .dv-crumbs {
   display: flex; align-items: center; gap: 7px;
   padding: 6px 11px; border-radius: 10px; max-width: 100%;
-  background: rgba(9, 15, 27, 0.82); border: 1px solid var(--line);
-  backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
-  font-size: 12px; color: var(--sub); white-space: nowrap;
+  background: var(--panel, #ffffff); border: 1px solid var(--line, rgba(36,48,44,0.12));
+  backdrop-filter: blur(10px); box-shadow: 0 8px 24px var(--shadow, rgba(31,42,38,0.14));
+  font-size: 12px; color: var(--sub, #5f6f69); white-space: nowrap;
 }
 .dv-crumbs button {
-  border: 0; background: none; color: #93c5fd; font: inherit;
+  border: 0; background: none; color: var(--accent, #2f7a68); font: inherit;
   cursor: pointer; padding: 0; max-width: 260px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dv-crumbs button:hover { color: #bae6fd; text-decoration: underline; }
+.dv-crumbs button:hover { text-decoration: underline; }
 .dv-crumbs .dv-sep { opacity: .45; }
 .dv-crumbs .dv-cur {
-  color: #e2e8f0; max-width: 260px; overflow: hidden;
+  color: var(--ink, #24302c); max-width: 260px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 
 .dv-seg {
   display: flex; gap: 2px; padding: 3px; border-radius: 10px;
-  background: rgba(9, 15, 27, 0.82); border: 1px solid var(--line);
+  background: var(--panel, #ffffff); border: 1px solid var(--line, rgba(36,48,44,0.12));
   backdrop-filter: blur(10px);
 }
 .dv-seg button {
-  border: 0; background: transparent; color: var(--sub);
-  font: inherit; font-size: 11.5px; padding: 5px 10px;
-  border-radius: 7px; cursor: pointer; transition: all .15s ease;
+  border: 0; background: transparent; color: var(--sub, #5f6f69);
+  font: inherit; font-size: 12px; padding: 5px 10px;
+  border-radius: 7px; cursor: pointer; transition: background .15s ease, color .15s ease;
 }
-.dv-seg button:hover { color: var(--ink); }
+.dv-seg button:hover { color: var(--ink, #24302c); background: var(--accent-soft, rgba(47,122,104,0.12)); }
 .dv-seg button.active {
-  background: rgba(56, 189, 248, .16); color: #7dd3fc;
-  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .3);
+  background: var(--accent-soft, rgba(47,122,104,0.12)); color: var(--accent, #2f7a68);
+  box-shadow: inset 0 0 0 1px rgba(47, 122, 104, .28);
 }
 
 .dv-search {
   display: flex; align-items: center; gap: 6px; height: 32px;
   padding: 0 10px; border-radius: 10px;
-  background: rgba(9, 15, 27, 0.82); border: 1px solid var(--line);
+  background: var(--panel, #ffffff); border: 1px solid var(--line, rgba(36,48,44,0.12));
   backdrop-filter: blur(10px); transition: border-color .15s ease, box-shadow .15s ease;
 }
 .dv-search:focus-within {
-  border-color: rgba(56, 189, 248, .55);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, .1);
+  border-color: var(--accent, #2f7a68);
+  box-shadow: 0 0 0 3px var(--accent-soft, rgba(47,122,104,0.12));
 }
 .dv-search input {
   width: 178px; border: 0; outline: 0; background: transparent;
-  color: var(--ink); font: inherit; font-size: 12px;
+  color: var(--ink, #24302c); font: inherit; font-size: 12px;
 }
-.dv-search input::placeholder { color: rgba(139, 156, 182, .75); }
+.dv-search input::placeholder { color: var(--sub, #5f6f69); opacity: .72; }
 
 .dv-btn {
-  border: 1px solid var(--line); background: rgba(9, 15, 27, 0.82);
-  color: var(--ink); font: inherit; font-size: 11.5px;
+  border: 1px solid var(--line, rgba(36,48,44,0.12)); background: var(--panel, #ffffff);
+  color: var(--ink, #24302c); font: inherit; font-size: 12px;
   padding: 7px 11px; border-radius: 9px; cursor: pointer;
-  backdrop-filter: blur(10px); transition: all .15s ease; white-space: nowrap;
+  backdrop-filter: blur(10px); transition: background .15s ease, color .15s ease, border-color .15s ease;
+  white-space: nowrap;
 }
 .dv-btn:hover {
-  color: #bae6fd; border-color: rgba(56, 189, 248, .35);
-  background: rgba(56, 189, 248, .12);
+  color: var(--accent, #2f7a68); border-color: rgba(47, 122, 104, .35);
+  background: var(--accent-soft, rgba(47,122,104,0.12));
 }
 
 .dv-legend {
   position: absolute; left: 14px; bottom: 14px; z-index: 5;
   display: flex; flex-wrap: wrap; gap: 4px 11px; max-width: 330px;
   padding: 8px 11px; border-radius: 10px;
-  background: rgba(9, 15, 27, .78); border: 1px solid var(--line);
-  backdrop-filter: blur(10px); font-size: 11px; color: #cbd5e1;
+  background: var(--panel, #ffffff); border: 1px solid var(--line, rgba(36,48,44,0.12));
+  backdrop-filter: blur(10px); font-size: 11.5px; color: var(--sub, #5f6f69);
 }
 .dv-legend .dv-li { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
 .dv-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
-.dv-legend .dv-count { color: var(--sub); }
+.dv-legend .dv-count { color: var(--sub, #5f6f69); opacity: .8; }
 
 .dv-hint {
   position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
   z-index: 4; max-width: 90%; overflow: hidden; text-overflow: ellipsis;
-  font-size: 11px; color: var(--sub); white-space: nowrap; pointer-events: none;
-  background: rgba(7, 11, 20, .6); border: 1px solid rgba(148, 163, 184, .12);
+  font-size: 11.5px; color: var(--sub, #5f6f69); white-space: nowrap; pointer-events: none;
+  background: var(--panel, #ffffff); border: 1px solid var(--line, rgba(36,48,44,0.12));
   padding: 5px 12px; border-radius: 20px;
+  box-shadow: 0 6px 18px var(--shadow, rgba(31,42,38,0.14));
 }
 
 .dv-empty {
   position: absolute; inset: 0; z-index: 3; display: none;
   align-items: center; justify-content: center; flex-direction: column; gap: 6px;
   padding: 0 24px; text-align: center; pointer-events: none;
-  color: var(--sub); font-size: 13px;
+  color: var(--sub, #5f6f69); font-size: 13px;
 }
 .dv-empty.show { display: flex; }
-.dv-empty-sub { font-size: 11px; opacity: .72; }
+.dv-empty-sub { font-size: 11.5px; opacity: .72; }
 
 .dv-tip {
   position: absolute; z-index: 12; pointer-events: none;
-  background: rgba(9, 15, 27, .97); border: 1px solid rgba(56, 189, 248, .35);
+  background: ${TH.tipBg}; border: 1px solid ${TH.line};
   border-radius: 9px; padding: 8px 11px; max-width: 300px;
-  font-size: 12px; color: var(--ink); opacity: 0; transform: translateY(4px);
+  font-size: 12px; color: ${TH.ink}; opacity: 0; transform: translateY(4px);
   transition: opacity .12s ease, transform .12s ease;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  box-shadow: 0 12px 30px ${TH.shadow};
 }
 .dv-tip.show { opacity: 1; transform: translateY(0); }
 .dv-tip b { font-size: 12.5px; }
-.dv-tip .sub { color: var(--sub); font-size: 11px; margin-top: 3px; }
+.dv-tip .sub { color: ${TH.sub}; font-size: 11.5px; margin-top: 3px; }
 
-.dv-list { margin: 0; padding-left: 16px; color: #a9b8cf; font-size: 11.5px; line-height: 1.8; }
+.dv-list { margin: 0; padding-left: 16px; color: ${TH.sub}; font-size: 12px; line-height: 1.8; }
 .dv-filelist { display: flex; flex-direction: column; gap: 4px; }
 .dv-file {
   display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
   padding: 5px 8px; border-radius: 7px; cursor: pointer;
-  background: rgba(148, 163, 184, .06); border: 1px solid transparent;
-  color: #cbd5e1; font-size: 11.5px;
+  background: ${TH.accentSoft}; border: 1px solid transparent;
+  color: ${TH.ink}; font-size: 12px;
 }
-.dv-file:hover { background: rgba(56, 189, 248, .12); border-color: rgba(56, 189, 248, .3); }
+.dv-file:hover { border-color: ${TH.accent}; }
 .dv-file code {
-  color: #93c5fd; font-family: ${MONO}; font-size: 11px;
+  color: ${TH.accent}; font-family: ${MONO}; font-size: 11.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dv-file span { color: var(--sub); flex: none; font-size: 10.5px; }
-.dv-legend-grid { display: flex; flex-wrap: wrap; gap: 6px 13px; font-size: 11px; color: #cbd5e1; }
+.dv-file span { color: ${TH.sub}; flex: none; font-size: 11.5px; }
+.dv-legend-grid { display: flex; flex-wrap: wrap; gap: 6px 13px; font-size: 11.5px; color: ${TH.sub}; }
 .dv-gi { display: flex; align-items: center; gap: 5px; }
 .dv-gi i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
-.dv-gi em { color: var(--sub); font-style: normal; }
+.dv-gi em { color: ${TH.sub}; font-style: normal; }
 
-@media (max-width: 980px) {
-  .dv-hud { max-width: calc(100% - 24px); }
-  .dv-search input { width: 128px; }
-  .dv-legend { display: none; }
-  .dv-hint { display: none; }
+@media (max-width: 900px) {
+  .dv-hud {
+    left: 8px; top: 8px; right: 8px;
+    max-width: calc(100% - 16px);
+  }
+  .dv-hud .dv-row { gap: 6px; }
+  .dv-search { flex: 1 1 auto; min-width: 0; }
+  .dv-search input { width: 100%; min-width: 0; }
+  .dv-legend, .dv-hint { display: none; }
+  .dv-root .view-panel {
+    left: 8px; right: 8px; top: auto; bottom: 8px;
+    width: auto; max-height: 42%; border-radius: 12px;
+  }
 }
 `;
-
-  // 视图脚本按 index.html 的顺序先于 app.js 加载，此时 window.CodeViz 还不存在。
-  // 这里用一个临时 shim 收集注册（本视图 + 其它同序加载的视图），
-  // 等 app.js 建立真正的 window.CodeViz 时自动转交；若 CodeViz 已存在则直接注册。
-  // 这样不依赖加载顺序，也不改动 app.js。
-  function registerDeps(factory) {
-    if (window.CodeViz && typeof window.CodeViz.registerView === "function") {
-      window.CodeViz.registerView("deps", factory);
-      return;
-    }
-    const queue = window.__codevizPendingViews || (window.__codevizPendingViews = []);
-    queue.push(["deps", factory]);
-    if (window.__codevizViewShim) return;
-    window.__codevizViewShim = true;
-
-    let shim = {
-      registerView: function (name, fn) { queue.push([name, fn]); },
-      router: { go: function () {} },
-      toast: function () {},
-      data: {},
-    };
-
-    const defineReal = function (value) {
-      Object.defineProperty(window, "CodeViz", {
-        configurable: true, enumerable: true, writable: true, value: value,
-      });
-    };
-
-    Object.defineProperty(window, "CodeViz", {
-      configurable: true,
-      enumerable: true,
-      get: function () { return shim; },
-      set: function (value) {
-        shim = value || shim;
-        defineReal(value);
-        if (value && typeof value.registerView === "function") {
-          const items = queue.splice(0, queue.length);
-          for (let i = 0; i < items.length; i++) {
-            try { value.registerView(items[i][0], items[i][1]); }
-            catch (err) { console.error("[codeviz] registerView failed:", err); }
-          }
-        }
-      },
-    });
-  }
 
   function createDepsView(viewCtx) {
     const container = viewCtx.container;
@@ -359,11 +273,14 @@
       return (g == null || g === "") ? "other" : String(g);
     }
 
+    // 数据里的分组颜色只信任 #rgb / #rrggbb，其余一律退回主题调色板
     function groupColor(g) {
       const key = groupKey(g);
       const def = groups[key];
-      if (def && typeof def.color === "string" && def.color) return def.color;
-      return FALLBACK_PALETTE[hashStr(key) % FALLBACK_PALETTE.length] || DEFAULT_COLOR;
+      if (def && typeof def.color === "string" && COLOR_RE.test(def.color.trim())) {
+        return def.color.trim();
+      }
+      return TH.palette[CV.hashStr(key) % TH.palette.length] || TH.node;
     }
 
     function groupLabel(g) {
@@ -391,7 +308,7 @@
       const out = [];
       merged.forEach(function (e) {
         // 稳定的曲线偏移，2D 下避免所有边完全重叠
-        e.bend = (((hashStr(e.source + "\u0001" + e.target) % 7) - 3) * 0.045);
+        e.bend = (((CV.hashStr(e.source + "\u0001" + e.target) % 7) - 3) * 0.045);
         out.push(e);
       });
       return out;
@@ -468,7 +385,12 @@
       fitPending: true,
       drag: null,
       tipId: null,
+      // 双击会连续派发两次 click：第一次切层级后用它吃掉第二次
       lastLevelChange: 0,
+      // 多指触控：pointerId -> 局部坐标；pinch 存在时进入双指缩放
+      pointers: new Map(),
+      pinch: null,
+      suppressClick: false,
       built: false,
       active: false,
       raf: 0,
@@ -485,7 +407,9 @@
 
     const canvas = document.createElement("canvas");
     canvas.className = "dv-canvas";
-    canvas.setAttribute("aria-label", "系统依赖图");
+    canvas.tabIndex = 0;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "系统依赖图：方向键平移，加号减号缩放，回车打开选中节点，Esc 取消选中");
     container.appendChild(canvas);
     const pen = canvas.getContext("2d");
 
@@ -568,7 +492,9 @@
       let gutter = 0;
       if (w >= 1180) gutter = 372;
       else if (w >= 940) gutter = 330;
-      return { w: Math.max(220, w - gutter), h: state.height };
+      // 窄屏下详情面板是底部抽屉（约 42% 高），把可视绘图区让到面板上方。
+      const h = w <= 900 ? Math.max(180, state.height * 0.56) : state.height;
+      return { w: Math.max(220, w - gutter), h: h };
     }
 
     function ensureSize() {
@@ -710,11 +636,15 @@
       let minY = Infinity, maxY = -Infinity;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
-        const pad = n.base + 18;
-        if (n.x2 - pad < minX) minX = n.x2 - pad;
-        if (n.x2 + pad > maxX) maxX = n.x2 + pad;
-        if (n.y2 - pad < minY) minY = n.y2 - pad;
-        if (n.y2 + pad > maxY) maxY = n.y2 + pad;
+        // 标签是画在节点下方的胶囊，横向最多约 170px：给标签留出空间，
+        // 否则首屏边缘的节点文字会被裁掉。
+        const padX = Math.max(n.base + 18, 92);
+        const padTop = n.base + 20;
+        const padBottom = n.base + 38;
+        if (n.x2 - padX < minX) minX = n.x2 - padX;
+        if (n.x2 + padX > maxX) maxX = n.x2 + padX;
+        if (n.y2 - padTop < minY) minY = n.y2 - padTop;
+        if (n.y2 + padBottom > maxY) maxY = n.y2 + padBottom;
       }
       const vp = viewport();
       const bw = Math.max(60, maxX - minX);
@@ -765,7 +695,7 @@
       return {
         id: path,
         kind: "file",
-        label: basename(path),
+        label: CV.basename(path),
         full: path,
         group: group,
         raw: f,
@@ -967,19 +897,20 @@
       updateLegend();
       updateEmpty();
       updateHint();
+      updateCanvasA11y();
       state.built = true;
     }
 
     /* ==================== 右侧详情面板 ==================== */
 
     function metricCell(value, label) {
-      return '<div class="metric"><b>' + esc(value) + '</b><span>' + esc(label) + "</span></div>";
+      return '<div class="metric"><b>' + CV.esc(value) + '</b><span>' + CV.esc(label) + "</span></div>";
     }
 
     function setPanel(title, color, badgeText, bodyHtml) {
       panelTitle.textContent = title;
-      panelBadge.innerHTML = '<i style="background:' + esc(color) + ";color:" + esc(color) + '"></i><span>' +
-        esc(badgeText) + "</span>";
+      panelBadge.innerHTML = '<i style="background:' + CV.esc(color) + ";color:" + CV.esc(color) + '"></i><span>' +
+        CV.esc(badgeText) + "</span>";
       panelBody.innerHTML = bodyHtml;
       panelBody.scrollTop = 0;
     }
@@ -1006,7 +937,7 @@
       const desc = project.description ? String(project.description) : "";
 
       const parts = [];
-      if (desc) parts.push('<p class="desc">' + esc(desc) + "</p>");
+      if (desc) parts.push('<p class="desc">' + CV.esc(desc) + "</p>");
       parts.push('<div class="section"><h3>规模</h3><div class="metrics">' +
         metricCell(modules.length, "模块") +
         metricCell(Number.isFinite(Number(idx.files)) ? idx.files : files.length, "文件") +
@@ -1026,8 +957,8 @@
         parts.push('<div class="section"><h3>分组</h3><div class="dv-legend-grid">' +
           counts.map(function (entry) {
             const color = groupColor(entry[0]);
-            return '<span class="dv-gi"><i style="background:' + esc(color) + ";color:" + esc(color) +
-              '"></i>' + esc(groupLabel(entry[0])) + ' <em>' + entry[1] + "</em></span>";
+            return '<span class="dv-gi"><i style="background:' + CV.esc(color) + ";color:" + CV.esc(color) +
+              '"></i>' + CV.esc(groupLabel(entry[0])) + ' <em>' + entry[1] + "</em></span>";
           }).join("") +
           "</div></div>");
       }
@@ -1039,9 +970,9 @@
       if (!list || !list.length) return '<span class="empty">无</span>';
       return list.map(function (d) {
         const id = String(d.id);
-        const label = kind === "module" ? moduleLabel(id) : basename(id);
+        const label = kind === "module" ? moduleLabel(id) : CV.basename(id);
         return '<div class="chip" data-act="' + (kind === "module" ? "module" : "file") +
-          '" data-id="' + esc(id) + '" title="' + esc(id) + '"><span>' + esc(label) +
+          '" data-id="' + CV.esc(id) + '" title="' + CV.esc(id) + '"><span>' + CV.esc(label) +
           "</span><span>" + toNum(d.weight, 0) + "</span></div>";
       }).join("");
     }
@@ -1069,7 +1000,7 @@
       }).slice(0, 6);
 
       const parts = [];
-      if (desc) parts.push('<p class="desc">' + esc(desc) + "</p>");
+      if (desc) parts.push('<p class="desc">' + CV.esc(desc) + "</p>");
       parts.push('<div class="section"><h3>规模</h3><div class="metrics">' +
         metricCell(fileCount, "文件") +
         metricCell(symbols, "符号") +
@@ -1080,8 +1011,8 @@
         (top.length
           ? '<div class="dv-filelist">' + top.map(function (f) {
             const path = String(f.path);
-            return '<div class="dv-file" data-act="open" data-path="' + esc(path) +
-              '" title="' + esc(path) + '"><code>' + esc(basename(path)) +
+            return '<div class="dv-file" data-act="open" data-path="' + CV.esc(path) +
+              '" title="' + CV.esc(path) + '"><code>' + CV.esc(CV.basename(path)) +
               "</code><span>" + toNum(f.symbols, 0) + " 符号</span></div>";
           }).join("") + "</div>"
           : '<span class="empty">该模块没有文件记录</span>') +
@@ -1115,11 +1046,11 @@
       const ins = fileDeps.inn.get(key) || [];
 
       const parts = [];
-      parts.push('<p class="pathline">' + esc(key) + "</p>");
+      parts.push('<p class="pathline">' + CV.esc(key) + "</p>");
       if (modId) {
         parts.push('<div class="section"><h3>所属模块</h3><div class="chips">' +
-          '<div class="chip" data-act="module" data-id="' + esc(modId) + '"><span>' +
-          esc(moduleLabel(modId)) + "</span><span>→</span></div></div></div>");
+          '<div class="chip" data-act="module" data-id="' + CV.esc(modId) + '"><span>' +
+          CV.esc(moduleLabel(modId)) + "</span><span>→</span></div></div></div>");
       }
       parts.push('<div class="section"><h3>规模</h3><div class="metrics">' +
         metricCell(metric.lines || "—", "行数") +
@@ -1137,10 +1068,10 @@
       parts.push('<div class="section"><h3>被依赖（入 · ' + ins.length + '）</h3><div class="chips">' +
         depChips(ins, "file") + "</div></div>");
       parts.push('<div class="section"><div class="chips">' +
-        '<div class="chip" data-act="open" data-path="' + esc(key) + '"><span>在源码侧栏打开</span><span>↗</span></div>' +
+        '<div class="chip" data-act="open" data-path="' + CV.esc(key) + '"><span>在源码侧栏打开</span><span>↗</span></div>' +
         "</div></div>");
 
-      setPanel(basename(key), groupColor(group), groupLabel(group) + " · 文件", parts.join(""));
+      setPanel(CV.basename(key), groupColor(group), groupLabel(group) + " · 文件", parts.join(""));
     }
 
     function renderPanel() {
@@ -1171,17 +1102,17 @@
       if (state.level === "file") {
         parts.push('<span class="dv-sep">/</span>');
         if (state.moduleId) {
-          parts.push('<button type="button" data-crumb="module">' + esc(moduleLabel(state.moduleId)) + "</button>");
+          parts.push('<button type="button" data-crumb="module">' + CV.esc(moduleLabel(state.moduleId)) + "</button>");
         } else {
           parts.push('<span class="dv-cur">全部文件</span>');
         }
       }
       if (state.panel && state.panel.kind === "file") {
         const node = state.nodeById.get(state.panel.id);
-        const label = node ? node.label : basename(state.panel.id);
-        parts.push('<span class="dv-sep">/</span><span class="dv-cur">' + esc(label) + "</span>");
+        const label = node ? node.label : CV.basename(state.panel.id);
+        parts.push('<span class="dv-sep">/</span><span class="dv-cur">' + CV.esc(label) + "</span>");
       } else if (state.panel && state.panel.kind === "module" && state.level === "module" && state.panel.id) {
-        parts.push('<span class="dv-sep">/</span><span class="dv-cur">' + esc(moduleLabel(state.panel.id)) + "</span>");
+        parts.push('<span class="dv-sep">/</span><span class="dv-cur">' + CV.esc(moduleLabel(state.panel.id)) + "</span>");
       }
       crumbsEl.innerHTML = parts.join("");
     }
@@ -1226,8 +1157,8 @@
       legendEl.style.display = "";
       legendEl.innerHTML = items.map(function (entry) {
         const color = groupColor(entry[0]);
-        return '<span class="dv-li"><i style="background:' + esc(color) + ";color:" + esc(color) +
-          '"></i>' + esc(groupLabel(entry[0])) + '<span class="dv-count">' + entry[1] + "</span></span>";
+        return '<span class="dv-li"><i style="background:' + CV.esc(color) + ";color:" + CV.esc(color) +
+          '"></i>' + CV.esc(groupLabel(entry[0])) + '<span class="dv-count">' + entry[1] + "</span></span>";
       }).join("");
     }
 
@@ -1250,9 +1181,16 @@
       } else if (!modules.length) {
         text = "没有模块级数据（data.modules 为空）";
       }
-      emptyEl.innerHTML = "<div>" + esc(text) + "</div>" +
+      emptyEl.innerHTML = "<div>" + CV.esc(text) + "</div>" +
         '<div class="dv-empty-sub">仍可切换层级 / 维度，或检查 codeviz/v1 数据契约</div>';
       emptyEl.classList.add("show");
+    }
+
+    function updateCanvasA11y() {
+      const kind = state.level === "file" ? "文件" : "模块";
+      canvas.setAttribute("aria-label",
+        "系统依赖图：当前显示 " + state.nodes.length + " 个" + kind + "节点、" +
+        state.edges.length + " 条依赖。方向键平移，加号减号缩放，回车打开选中节点，Esc 取消选中。");
     }
 
     /* ==================== 层级 / 语义缩放 / 选中 ==================== */
@@ -1498,11 +1436,11 @@
         } else {
           sub = groupLabel(node.group) + " · " + node.metric.lines + " 行 · " + node.metric.symbols + " 符号";
         }
-        tipEl.innerHTML = "<b>" + esc(node.label) + "</b>" +
-          (node.kind === "file" ? '<div class="sub">' + esc(shortPath(node.full)) + "</div>" : "") +
-          '<div class="sub">' + esc(sub) + "</div>" +
+        tipEl.innerHTML = "<b>" + CV.esc(node.label) + "</b>" +
+          (node.kind === "file" ? '<div class="sub">' + CV.esc(CV.shortPath(node.full, 4)) + "</div>" : "") +
+          '<div class="sub">' + CV.esc(sub) + "</div>" +
           '<div class="sub">依赖 ' + outs + " 出 / " + ins + " 入</div>";
-        tipEl.style.borderColor = rgba(groupColor(node.group), 0.55);
+        tipEl.style.borderColor = CV.rgba(groupColor(node.group), 0.55);
         tipEl.classList.add("show");
       }
       const maxW = state.width - 12;
@@ -1517,9 +1455,91 @@
       tipEl.style.top = Math.max(6, y) + "px";
     }
 
+    function zoomAt(px, py, factor) {
+      const k = clamp(state.t.k * factor, 0.08, 3.5);
+      const wx = (px - state.t.x) / state.t.k;
+      const wy = (py - state.t.y) / state.t.k;
+      state.t.k = k;
+      state.t.x = px - wx * k;
+      state.t.y = py - wy * k;
+      state.userMoved = true;
+    }
+
+    function panBy(dx, dy) {
+      if (state.dim3) {
+        const basis = cameraBasis();
+        const s = Math.max(0.05, state.cam.focal / state.cam.dist);
+        state.cam.target.x += (-basis.right.x * dx + basis.up.x * dy) / s;
+        state.cam.target.y += (-basis.right.y * dx + basis.up.y * dy) / s;
+        state.cam.target.z += (-basis.right.z * dx + basis.up.z * dy) / s;
+      } else {
+        state.t.x += dx;
+        state.t.y += dy;
+      }
+      state.userMoved = true;
+    }
+
+    function pointerPair() {
+      const list = [];
+      state.pointers.forEach(function (p) { list.push(p); });
+      if (list.length < 2) return null;
+      const a = list[0];
+      const b = list[1];
+      return {
+        mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+      };
+    }
+
+    function startPinch() {
+      const pair = pointerPair();
+      if (!pair) return;
+      // 双指按下即进入缩放：取消单指拖拽，之后的抬起不再当作点击
+      state.drag = null;
+      state.hoverId = null;
+      state.tipId = null;
+      tipEl.classList.remove("show");
+      state.pinch = {
+        dist: pair.dist,
+        k: state.t.k,
+        camDist: state.cam.dist,
+        w: {
+          x: (pair.mid.x - state.t.x) / Math.max(0.001, state.t.k),
+          y: (pair.mid.y - state.t.y) / Math.max(0.001, state.t.k),
+        },
+      };
+    }
+
+    function updatePinch() {
+      const pair = pointerPair();
+      if (!pair || !state.pinch) return;
+      const pinch = state.pinch;
+      const factor = clamp(pair.dist / pinch.dist, 0.2, 5);
+      if (state.dim3) {
+        state.cam.dist = clamp(pinch.camDist / factor, 320, 20000);
+      } else {
+        state.t.k = clamp(pinch.k * factor, 0.08, 3.5);
+        state.t.x = pair.mid.x - pinch.w.x * state.t.k;
+        state.t.y = pair.mid.y - pinch.w.y * state.t.k;
+      }
+      state.userMoved = true;
+    }
+
     function onPointerDown(ev) {
       if (ev.button !== 0 && ev.button !== 2) return;
       const p = localPoint(ev);
+      state.pointers.set(ev.pointerId, p);
+      if (state.pointers.size === 1) state.suppressClick = false;
+      try { canvas.setPointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+
+      if (state.pointers.size === 2) {
+        startPinch();
+        canvas.classList.remove("dv-grabbing");
+        requestDraw();
+        return;
+      }
+      if (state.pinch) return;
+
       ensureScreen();
       const hit = hitTest(p.x, p.y);
       const rightOrShift = ev.button === 2 || ev.shiftKey;
@@ -1549,12 +1569,23 @@
       }
 
       canvas.classList.add("dv-grabbing");
-      try { canvas.setPointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
       tipEl.classList.remove("show");
+      requestDraw();
     }
 
     function onPointerMove(ev) {
       const p = localPoint(ev);
+      if (state.pointers.has(ev.pointerId)) state.pointers.set(ev.pointerId, p);
+
+      if (state.pinch) {
+        if (state.pointers.size >= 2) {
+          updatePinch();
+          requestDraw();
+          return;
+        }
+        state.pinch = null;
+      }
+
       const d = state.drag;
       if (d) {
         if (Math.abs(p.x - d.sx) + Math.abs(p.y - d.sy) > 2) d.moved = true;
@@ -1566,13 +1597,8 @@
           d.sx = p.x; d.sy = p.y;
           state.userMoved = true;
         } else if (d.mode === "pan3d") {
-          const basis = cameraBasis();
-          const s = Math.max(0.05, state.cam.focal / state.cam.dist);
-          state.cam.target.x += (-basis.right.x * dx + basis.up.x * dy) / s;
-          state.cam.target.y += (-basis.right.y * dx + basis.up.y * dy) / s;
-          state.cam.target.z += (-basis.right.z * dx + basis.up.z * dy) / s;
+          panBy(dx, dy);
           d.sx = p.x; d.sy = p.y;
-          state.userMoved = true;
         } else if (d.mode === "node3d") {
           const basis = cameraBasis();
           const s = d.s;
@@ -1593,6 +1619,7 @@
           tipEl.classList.remove("show");
           state.tipId = null;
         }
+        requestDraw();
         return;
       }
 
@@ -1603,24 +1630,43 @@
         canvas.style.cursor = hit ? "pointer" : "grab";
       }
       showTip(hit, p.x, p.y);
+      requestDraw();
     }
 
     function onPointerUp(ev) {
+      state.pointers.delete(ev.pointerId);
+      try { canvas.releasePointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+
+      if (state.pinch) {
+        // 双指缩放结束后不派发点击
+        state.suppressClick = true;
+        state.drag = null;
+        if (state.pointers.size < 2) state.pinch = null;
+        canvas.classList.remove("dv-grabbing");
+        requestDraw();
+        return;
+      }
+
       const d = state.drag;
       state.drag = null;
       canvas.classList.remove("dv-grabbing");
-      try { canvas.releasePointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
-      if (!d) return;
-      if (!d.moved && (d.mode === "node3d" || d.mode === "node2d")) {
+      if (state.suppressClick) {
+        if (!state.pointers.size) state.suppressClick = false;
+        requestDraw();
+        return;
+      }
+      if (d && !d.moved && (d.mode === "node3d" || d.mode === "node2d")) {
         onNodeClick(d.node);
       }
+      requestDraw();
     }
 
     function onPointerLeave() {
-      if (state.drag) return;
+      if (state.drag || state.pinch) return;
       state.hoverId = null;
       state.tipId = null;
       tipEl.classList.remove("show");
+      requestDraw();
     }
 
     function onWheel(ev) {
@@ -1628,16 +1674,33 @@
       const p = localPoint(ev);
       if (state.dim3) {
         state.cam.dist = clamp(state.cam.dist * Math.exp(ev.deltaY * 0.0012), 320, 20000);
+        state.userMoved = true;
       } else {
-        const before = { x: (p.x - state.t.x) / state.t.k, y: (p.y - state.t.y) / state.t.k };
-        const factor = Math.exp(-ev.deltaY * 0.0014);
-        state.t.k = clamp(state.t.k * factor, 0.08, 3.5);
-        state.t.x = p.x - before.x * state.t.k;
-        state.t.y = p.y - before.y * state.t.k;
+        zoomAt(p.x, p.y, Math.exp(-ev.deltaY * 0.0014));
       }
-      state.userMoved = true;
       tipEl.classList.remove("show");
       state.tipId = null;
+      requestDraw();
+    }
+
+    function openSelected() {
+      const id = state.selectedId;
+      if (!id) return;
+      const node = state.nodeById.get(id);
+      if (!node) return;
+      if (node.kind === "module") {
+        state.lastLevelChange = performance.now();
+        go("file", node.id);
+      } else {
+        openSource(node.id);
+      }
+    }
+
+    function deselect() {
+      state.selectedId = null;
+      state.panel = { kind: "overview", id: null };
+      renderPanel();
+      renderCrumbs();
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -1650,37 +1713,97 @@
     canvas.addEventListener("dblclick", function (ev) {
       ev.preventDefault();
       relayout();
+      requestDraw();
+    });
+    canvas.addEventListener("keydown", function (ev) {
+      const step = ev.shiftKey ? 16 : 48;
+      let handled = true;
+      switch (ev.key) {
+        case "ArrowLeft": panBy(step, 0); break;
+        case "ArrowRight": panBy(-step, 0); break;
+        case "ArrowUp": panBy(0, step); break;
+        case "ArrowDown": panBy(0, -step); break;
+        case "+":
+        case "=":
+          if (state.dim3) state.cam.dist = clamp(state.cam.dist / 1.12, 320, 20000);
+          else zoomAt(state.width / 2, state.height / 2, 1.12);
+          state.userMoved = true;
+          break;
+        case "-":
+        case "_":
+          if (state.dim3) state.cam.dist = clamp(state.cam.dist * 1.12, 320, 20000);
+          else zoomAt(state.width / 2, state.height / 2, 1 / 1.12);
+          state.userMoved = true;
+          break;
+        case "Escape":
+          deselect();
+          break;
+        case "Enter":
+          openSelected();
+          break;
+        default:
+          handled = false;
+      }
+      if (!handled) return;
+      ev.preventDefault();
+      requestDraw();
     });
 
     window.addEventListener("resize", function () {
       if (!state.active) return;
       state.screen = new Map();
       if (!state.userMoved) state.fitPending = true;
+      requestDraw();
     });
 
     /* ==================== 绘制 ==================== */
 
+    // 点阵预渲染成图案，只有 gap / dpr 变化时才重建
+    let gridCache = null;
+
+    function gridPattern(gap) {
+      const dpr = state.dpr;
+      const key = Math.round(gap * 100) / 100;
+      if (gridCache && gridCache.gap === key && gridCache.dpr === dpr) return gridCache;
+      const tile = document.createElement("canvas");
+      const size = Math.max(6, Math.round(gap * dpr));
+      tile.width = size;
+      tile.height = size;
+      const tctx = tile.getContext("2d");
+      tctx.fillStyle = TH.grid;
+      tctx.beginPath();
+      tctx.arc(size / 2, size / 2, Math.max(0.8, dpr * 0.9), 0, TAU);
+      tctx.fill();
+      const pattern = pen.createPattern(tile, "repeat");
+      if (!pattern) return null;
+      gridCache = { gap: key, dpr: dpr, pattern: pattern, tileGap: size / dpr };
+      return gridCache;
+    }
+
     function drawBackdrop() {
       pen.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
       const bg = pen.createLinearGradient(0, 0, state.width, state.height);
-      bg.addColorStop(0, "#070b14");
-      bg.addColorStop(0.55, "#0a1322");
-      bg.addColorStop(1, "#0b1729");
+      bg.addColorStop(0, TH.bg0);
+      bg.addColorStop(0.55, TH.bg1);
+      bg.addColorStop(1, TH.bg2);
       pen.fillStyle = bg;
       pen.fillRect(0, 0, state.width, state.height);
 
       const gap = state.dim3 ? 46 : clamp(46 * state.t.k, 28, 72);
       if (gap < 16) return;
-      const ox = state.dim3 ? 0 : ((state.t.x % gap) + gap) % gap;
-      const oy = state.dim3 ? 0 : ((state.t.y % gap) + gap) % gap;
-      pen.fillStyle = "rgba(148,163,184,0.06)";
-      for (let x = ox; x < state.width; x += gap) {
-        for (let y = oy; y < state.height; y += gap) {
-          pen.beginPath();
-          pen.arc(x, y, 0.9, 0, TAU);
-          pen.fill();
-        }
-      }
+      const cache = gridPattern(gap);
+      if (!cache) return;
+      const g = cache.tileGap;
+      const ox = state.dim3 ? 0 : ((state.t.x % g) + g) % g;
+      const oy = state.dim3 ? 0 : ((state.t.y % g) + g) % g;
+      // 图案按设备像素铺，避免被 dpr 变换二次放大
+      pen.setTransform(1, 0, 0, 1, 0, 0);
+      pen.save();
+      pen.translate(Math.round(ox * state.dpr), Math.round(oy * state.dpr));
+      pen.fillStyle = cache.pattern;
+      pen.fillRect(0, 0, canvas.width, canvas.height);
+      pen.restore();
+      pen.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     }
 
     function drawFloor() {
@@ -1706,7 +1829,7 @@
       const z0 = minZ - 160;
       const z1 = maxZ + 160;
       const N = 8;
-      pen.strokeStyle = "rgba(148,163,184,0.075)";
+      pen.strokeStyle = CV.rgba(TH.sub, 0.12);
       pen.lineWidth = 1;
       for (let i = 0; i <= N; i++) {
         const t = i / N;
@@ -1759,32 +1882,15 @@
 
     function drawEdges(focus, matches) {
       const screen = state.screen;
-      const list = [];
+      const zr = state.zRange;
+      // 稳定顺序直接绘制：不构造临时数组，也不再每帧排序
       for (let i = 0; i < state.edges.length; i++) {
         const e = state.edges[i];
         const a = screen.get(e.source);
         const b = screen.get(e.target);
         if (!a || !b) continue;
-        list.push({ e: e, a: a, b: b });
-      }
-      if (!list.length) return;
-
-      list.sort(function (p, q) {
-        if (state.dim3) {
-          return ((q.a.zc + q.b.zc) / 2) - ((p.a.zc + p.b.zc) / 2);
-        }
-        return ((p.a.y + p.b.y) / 2) - ((q.a.y + q.b.y) / 2);
-      });
-
-      const zr = state.zRange;
-      for (let i = 0; i < list.length; i++) {
-        const item = list[i];
-        const e = item.e;
-        const a = item.a;
-        const b = item.b;
         const na = state.nodeById.get(e.source);
-        const nb = state.nodeById.get(e.target);
-        if (!na || !nb) continue;
+        if (!na) continue;
 
         const active = !!focus && (focus.idSet.has(e.source) || focus.idSet.has(e.target));
         let dim = false;
@@ -1799,13 +1905,13 @@
         const width = clamp(0.6 + Math.log2((e.weight || 1) + 1) * 0.5, 0.6, 2.8);
 
         pen.globalAlpha = dim
-          ? (state.dim3 ? 0.06 : 0.09)
-          : (state.dim3 ? 0.10 + depth * 0.5 : 0.5);
-        pen.strokeStyle = active ? rgba(col, 0.95) : col;
+          ? (state.dim3 ? 0.10 : 0.12)
+          : (state.dim3 ? 0.16 + depth * 0.55 : 0.58);
+        pen.strokeStyle = active ? CV.rgba(col, 0.95) : CV.mix(col, TH.bg1, 0.18);
         pen.lineWidth = active ? 2.4 : width;
         if (active) {
-          pen.shadowColor = rgba(col, 0.8);
-          pen.shadowBlur = 10;
+          pen.shadowColor = CV.rgba(col, 0.30);
+          pen.shadowBlur = 8;
         }
 
         if (state.dim3) {
@@ -1831,7 +1937,7 @@
           const ay = mt * mt * a.y + 2 * mt * t * cy + t * t * b.y;
           const ang = Math.atan2(b.y - cy, b.x - cx);
           pen.shadowBlur = 0;
-          drawArrow(ax, ay, ang, 6, rgba(col, dim ? 0.22 : 0.85));
+          drawArrow(ax, ay, ang, 6, CV.rgba(col, dim ? 0.24 : 0.78));
         }
         pen.shadowBlur = 0;
       }
@@ -1844,28 +1950,30 @@
       if (r < 0.7) return;
 
       if (active) {
-        const pulse = 1 + Math.sin(now / 280) * 0.07;
+        // 选中 / 悬停的呼吸环用主题强调色，不再用节点本体色
+        const pulse = 1 + Math.sin(now / 280) * 0.06;
         pen.beginPath();
         pen.arc(p.x, p.y, r * pulse + 7, 0, TAU);
-        pen.strokeStyle = rgba(col, 0.4);
+        pen.strokeStyle = CV.rgba(TH.accent, 0.45);
         pen.lineWidth = 2;
         pen.stroke();
       }
 
+      // 浅底上更友好的径向渐变：中心实、边缘淡化
       const grad = pen.createRadialGradient(
         p.x - r * 0.35, p.y - r * 0.4, Math.max(0.4, r * 0.12),
         p.x, p.y, Math.max(r, 0.5)
       );
-      grad.addColorStop(0, rgba(col, 0.98));
-      grad.addColorStop(0.55, rgba(col, 0.55));
-      grad.addColorStop(1, rgba(col, 0.12));
+      grad.addColorStop(0, CV.rgba(col, 0.95));
+      grad.addColorStop(0.55, CV.rgba(col, 0.55));
+      grad.addColorStop(1, CV.rgba(col, 0.18));
       pen.beginPath();
       pen.arc(p.x, p.y, r, 0, TAU);
       pen.fillStyle = grad;
       pen.fill();
 
       pen.lineWidth = active ? 1.8 : 1.1;
-      pen.strokeStyle = rgba(col, active ? 1 : 0.55);
+      pen.strokeStyle = CV.rgba(col, active ? 0.95 : 0.5);
       pen.stroke();
 
       if (r > 6) {
@@ -1877,47 +1985,31 @@
     }
 
     function drawNodes(focus, matches, now) {
-      const list = [];
       for (let i = 0; i < state.nodes.length; i++) {
         const n = state.nodes[i];
         const p = state.screen.get(n.id);
         if (!p) continue;
-        list.push({ n: n, p: p });
-      }
-      list.sort(function (a, b) {
-        return state.dim3 ? b.p.zc - a.p.zc : a.p.y - b.p.y;
-      });
-      for (let i = 0; i < list.length; i++) {
-        const item = list[i];
-        const active = isActiveNode(item.n);
-        const dim = isDimNode(item.n, focus, matches) && !active;
-        pen.globalAlpha = dim ? 0.18 : 1;
-        drawNodeShape(item.n, item.p, now, active);
+        const active = isActiveNode(n);
+        const dim = isDimNode(n, focus, matches) && !active;
+        pen.globalAlpha = dim ? 0.2 : 1;
+        drawNodeShape(n, p, now, active);
         pen.globalAlpha = 1;
       }
     }
 
-    function ellipsize(text, maxW) {
-      const str = String(text == null ? "" : text);
-      if (pen.measureText(str).width <= maxW) return str;
-      let t = str;
-      while (t.length > 1 && pen.measureText(t + "…").width > maxW) t = t.slice(0, -1);
-      return t + "…";
-    }
-
-    function drawPill(text, x, y, col, active, fontSize) {
+    function drawPill(text, x, y, active, fontSize) {
       pen.font = (active ? "700 " : "600 ") + fontSize + "px " + FONT;
       const w = pen.measureText(text).width;
-      const h = fontSize + 7;
-      pen.fillStyle = active ? "rgba(8,13,24,0.94)" : "rgba(8,13,24,0.68)";
-      roundRect(pen, x - w / 2 - 7, y - h / 2, w + 14, h, 8);
+      const h = fontSize + 8;
+      pen.fillStyle = active ? "rgba(255,255,255,0.97)" : "rgba(255,255,255,0.80)";
+      CV.roundRect(pen, x - w / 2 - 7, y - h / 2, w + 14, h, 8);
       pen.fill();
       if (active) {
-        pen.strokeStyle = rgba(col, 0.55);
+        pen.strokeStyle = CV.rgba(TH.accent, 0.55);
         pen.lineWidth = 1;
         pen.stroke();
       }
-      pen.fillStyle = active ? "#eaf4ff" : "#c3d2e6";
+      pen.fillStyle = active ? TH.ink : TH.sub;
       pen.textAlign = "center";
       pen.textBaseline = "middle";
       pen.fillText(text, x, y + 0.5);
@@ -1947,17 +2039,17 @@
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         if (!item.active && count >= 240) break;
-        const fs = item.n.kind === "module" ? 11.5 : 10.5;
+        const fs = item.n.kind === "module" ? 12.5 : 12;
         pen.font = (item.active ? "700 " : "600 ") + fs + "px " + FONT;
-        const text = ellipsize(item.n.label, 170);
+        const text = CV.ellipsize(pen, item.n.label, 170);
         const w = pen.measureText(text).width + 14;
-        const h = fs + 7;
+        const h = fs + 8;
         const x = item.p.x;
         const y = item.p.y + item.p.r + h / 2 + 5;
         const rect = { x: x - w / 2, y: y - h / 2, w: w, h: h };
         if (!item.active && placed.some(function (q) { return overlapRect(q, rect); })) continue;
         placed.push(rect);
-        drawPill(text, x, y, groupColor(item.n.group), item.active, fs);
+        drawPill(text, x, y, item.active, fs);
         count++;
       }
     }
@@ -1987,20 +2079,26 @@
 
     /* ==================== 生命周期 ==================== */
 
-    function loop(now) {
+    // 单帧合并：任何交互只登记一次 rAF，空闲时完全不跑循环
+    function requestDraw() {
+      if (!state.active || state.raf) return;
+      state.raf = requestAnimationFrame(frame);
+    }
+
+    // 仅当有悬停 / 选中节点，且系统未要求减少动态效果时，才继续跑脉冲
+    function needsPulse() {
+      return !!((state.hoverId || state.selectedId) && !CV.prefersReducedMotion());
+    }
+
+    function frame(now) {
       state.raf = 0;
       if (!state.active) return;
-      state.raf = requestAnimationFrame(loop);
       try {
         draw(now);
       } catch (err) {
         console.error("[codeviz] deps draw failed:", err);
       }
-    }
-
-    function startLoop() {
-      if (!state.active || state.raf) return;
-      state.raf = requestAnimationFrame(loop);
+      if (needsPulse()) state.raf = requestAnimationFrame(frame);
     }
 
     function activate(params) {
@@ -2046,7 +2144,7 @@
         updateHint();
       }
       updateToolbar();
-      startLoop();
+      requestDraw();
     }
 
     function deactivate() {
@@ -2056,6 +2154,9 @@
         state.raf = 0;
       }
       state.drag = null;
+      state.pointers.clear();
+      state.pinch = null;
+      state.suppressClick = false;
       state.hoverId = null;
       state.tipId = null;
       tipEl.classList.remove("show");
@@ -2073,5 +2174,5 @@
     return { activate: activate, deactivate: deactivate };
   }
 
-  registerDeps(createDepsView);
+  window.CodeViz.registerView("deps", createDepsView);
 })();

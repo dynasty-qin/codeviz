@@ -5,7 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from codeviz.render import render_single_file, render_site
+import pytest
+
+from codeviz.render import (
+    build_project,
+    build_single_html,
+    render_single_file,
+    render_site,
+    web_dir,
+)
 
 VIEW_FILES = ["source.js", "deps.js", "calls.js", "complexity.js", "overlay.js"]
 
@@ -143,3 +151,127 @@ def test_render_site_overwrites_existing_output(minimal_data: dict, tmp_path: Pa
 
     text = (second / "assets" / "data.js").read_text(encoding="utf-8")
     assert "window.CODEVIZ_DATA" in text
+
+
+def test_render_site_refuses_foreign_assets(minimal_data: dict, tmp_path: Path) -> None:
+    out_dir = tmp_path / "foreign"
+    assets = out_dir / "assets"
+    assets.mkdir(parents=True)
+    marker = assets / "foo.txt"
+    marker.write_text("user data", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="拒绝覆盖"):
+        render_site(minimal_data, out_dir)
+
+    assert marker.read_text(encoding="utf-8") == "user data"
+
+
+def test_render_site_rebuilds_marked_output(minimal_data: dict, tmp_path: Path) -> None:
+    out_dir = tmp_path / "rebuild"
+    render_site(minimal_data, out_dir)
+    assert (out_dir / ".codeviz-output").is_file()
+
+    # A second build recognises its own marker and replaces the assets.
+    root = _find_site_root(render_site(minimal_data, out_dir), out_dir)
+
+    assert (root / "assets" / "data.js").is_file()
+    assert (root / ".codeviz-output").is_file()
+
+
+def test_render_site_allows_empty_assets_dir(minimal_data: dict, tmp_path: Path) -> None:
+    out_dir = tmp_path / "empty-assets"
+    (out_dir / "assets").mkdir(parents=True)
+
+    root = _find_site_root(render_site(minimal_data, out_dir), out_dir)
+
+    assert (root / "assets" / "data.js").is_file()
+
+
+def test_render_site_rejects_project_root_output(minimal_data: dict, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="项目根目录"):
+        render_site(minimal_data, tmp_path, project_path=tmp_path)
+
+
+def test_render_site_rejects_output_inside_web_dir(minimal_data: dict) -> None:
+    target = web_dir() / "generated"
+    assert not target.exists(), "测试不应在 web 目录中留下文件"
+
+    with pytest.raises(ValueError, match="web 模板目录"):
+        render_site(minimal_data, target)
+
+    assert not target.exists()
+
+
+def test_build_project_rejects_project_root_output(project: Path) -> None:
+    with pytest.raises(ValueError, match="项目根目录"):
+        build_project(project, out_dir=project, config_path=project / "codeviz.json")
+
+
+def test_build_project_rejects_output_above_project_root(project: Path) -> None:
+    with pytest.raises(ValueError, match="上级"):
+        build_project(project, out_dir=project.parent, config_path=project / "codeviz.json")
+
+
+def test_render_site_writes_data_json_by_default(minimal_data: dict, tmp_path: Path) -> None:
+    out_dir = tmp_path / "with-json"
+
+    root = _find_site_root(render_site(minimal_data, out_dir), out_dir)
+
+    assert (root / "assets" / "data.js").is_file()
+    assert (root / "assets" / "viz-data.json").is_file()
+    payload = json.loads((root / "assets" / "viz-data.json").read_text(encoding="utf-8"))
+    assert payload["schema"] == "codeviz/v1"
+
+
+def test_render_site_can_skip_data_json(minimal_data: dict, tmp_path: Path) -> None:
+    out_dir = tmp_path / "no-json"
+
+    root = _find_site_root(
+        render_site(minimal_data, out_dir, write_data_json=False),
+        out_dir,
+    )
+
+    assert (root / "assets" / "data.js").is_file()
+    assert not (root / "assets" / "viz-data.json").exists()
+
+
+def test_build_single_html_is_repeatable(minimal_data: dict, tmp_path: Path) -> None:
+    image = tmp_path / "arch.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
+    data = dict(minimal_data)
+    data["overlays"] = [{"id": "image", "type": "image", "image": "arch.png"}]
+    before = json.loads(json.dumps(data))
+
+    first = build_single_html(data, project_path=tmp_path)
+    second = build_single_html(data, project_path=tmp_path)
+
+    assert first == second
+    assert data == before
+    assert "data:image/png;base64," in first
+
+
+def test_build_project_hide_root(project: Path, tmp_path: Path) -> None:
+    out_dir = tmp_path / "hidden-root"
+
+    build_project(
+        project,
+        out_dir=out_dir,
+        config_path=project / "codeviz.json",
+        hide_root=True,
+    )
+
+    payload = _extract_data_js((out_dir / "assets" / "data.js").read_text(encoding="utf-8"))
+    assert payload["project"]["root"] == ""
+
+
+def test_build_project_hide_root_from_config(project: Path, tmp_path: Path) -> None:
+    config = json.loads((project / "codeviz.json").read_text(encoding="utf-8"))
+    config.setdefault("project", {})["hide_root"] = True
+    config_path = tmp_path / "hide-root.json"
+    config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+    out_dir = tmp_path / "config-hidden-root"
+
+    build_project(project, out_dir=out_dir, config_path=config_path)
+
+    payload = _extract_data_js((out_dir / "assets" / "data.js").read_text(encoding="utf-8"))
+    assert payload["project"]["root"] == ""

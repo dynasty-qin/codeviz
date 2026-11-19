@@ -164,24 +164,27 @@ def normalize_config(raw: dict, project_path: Path, *, source: Path | None = Non
             if not isinstance(entry.get("label"), str):
                 entry["label"] = key
             color = entry.get("color")
-            if color is not None and not (isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
+            valid_color = isinstance(color, str) and re.fullmatch(
+                r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", color
+            )
+            if not valid_color:
                 entry.pop("color", None)
             groups[key] = entry
 
-    defaults = raw.get("defaults")
-    defaults = dict(defaults) if isinstance(defaults, dict) else {}
-    default_group = defaults.get("group")
-    default_id = defaults.get("id")
+    raw_defaults = raw.get("defaults")
+    raw_defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    default_group = raw_defaults.get("group")
+    default_id = raw_defaults.get("id")
     defaults = {
         "group": default_group if isinstance(default_group, str) and default_group else "other",
         "id": default_id if isinstance(default_id, str) and default_id else "{dir}",
     }
-    label = defaults.get("label")
-    if isinstance(label, str) and label:
-        defaults["label"] = label
-    desc = defaults.get("desc")
-    if isinstance(desc, str) and desc:
-        defaults["desc"] = desc
+    # ``label`` / ``desc`` must be read before rebuilding the dict, and are
+    # optional (bad types are ignored rather than rejecting the config).
+    for key in ("label", "desc"):
+        value = raw_defaults.get(key)
+        if isinstance(value, str) and value:
+            defaults[key] = value
 
     modules: list[dict] = []
     raw_modules = raw.get("modules")
@@ -217,11 +220,14 @@ def normalize_config(raw: dict, project_path: Path, *, source: Path | None = Non
     overlays = raw.get("overlays")
     overlays = [item for item in overlays if isinstance(item, dict)] if isinstance(overlays, list) else []
 
-    exclude = raw.get("exclude")
-    if not isinstance(exclude, list):
-        exclude = list(DEFAULT_EXCLUDE)
-    else:
-        exclude = [str(item) for item in exclude if isinstance(item, str) and item]
+    # ``exclude`` extends the defaults (README: 额外排除); it never replaces
+    # them, so repeated builds keep ignoring their own output directory.
+    exclude = list(DEFAULT_EXCLUDE)
+    raw_exclude = raw.get("exclude")
+    if isinstance(raw_exclude, list):
+        for item in raw_exclude:
+            if isinstance(item, str) and item and item not in exclude:
+                exclude.append(item)
 
     config.update(
         {

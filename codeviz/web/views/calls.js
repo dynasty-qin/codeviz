@@ -3,159 +3,161 @@
 
   // 调用链视图：数据驱动（data.symbols / data.calls / data.entries）。
   // 2D 分层布局：根函数居中偏左，callees 向右展开，直接调用者（up=1）在左侧。
-  // 只使用 Canvas + DOM，不依赖任何外部库。
+  // 只使用 Canvas + DOM，不依赖任何外部库；公共工具来自 views/common.js（window.CV）。
+
+  const CV = window.CV;
+  const THEME = window.CVTheme;
+
+  // 薄别名，避免每个绘制函数都写 CV.xxx；实现统一在 common.js。
+  const esc = CV.esc;
+  const num = CV.num;
+  const clamp = CV.clamp;
+  const rgba = CV.rgba;
+  const roundRect = CV.roundRect;
+
+  // 数据里的颜色可能被篡改成任意字符串，写进内联样式前先过白名单。
+  const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+  function safeColor(value, fallback) {
+    const text = String(value == null ? "" : value).trim();
+    return HEX_COLOR.test(text) ? text : fallback;
+  }
 
   const STYLE = `
 .cv-calls { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
 .cv-toolbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 9px 14px; border-bottom: 1px solid var(--line);
-  background: rgba(7, 11, 20, 0.55); z-index: 6;
+  background: var(--panel); z-index: 6;
 }
-.cv-label { font-size: 11px; color: var(--sub); white-space: nowrap; }
+.cv-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--sub); white-space: nowrap;
+}
 .cv-select {
-  background: rgba(148, 163, 184, 0.08); color: var(--ink);
+  background: var(--panel-2); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 9px; font-family: inherit; font-size: 12px;
   max-width: 260px; outline: none;
 }
-.cv-select:focus { border-color: rgba(56, 189, 248, 0.5); }
-.cv-select:disabled { opacity: .5; }
-.cv-tabs { display: flex; gap: 2px; padding: 2px; background: rgba(148, 163, 184, 0.08); border-radius: 8px; }
+.cv-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cv-select:disabled { opacity: .55; }
+.cv-tabs {
+  display: inline-flex; gap: 2px; padding: 2px; margin-left: 4px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+}
 .cv-tab {
   border: 0; background: transparent; color: var(--sub);
   padding: 4px 10px; border-radius: 6px; cursor: pointer;
-  font-family: inherit; font-size: 11.5px; transition: all .15s ease;
+  font-family: inherit; font-size: 12px; transition: background .15s ease, color .15s ease;
 }
-.cv-tab:hover { color: var(--ink); }
-.cv-tab.active { background: rgba(56, 189, 248, 0.17); color: #7dd3fc; box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.3); }
-.cv-check { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--sub); cursor: pointer; white-space: nowrap; }
-.cv-check input { accent-color: #38bdf8; }
+.cv-tab:hover { color: var(--ink); background: var(--accent-soft); }
+.cv-tab.active {
+  background: var(--accent-soft); color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600;
+}
+.cv-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cv-check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--sub); cursor: pointer; white-space: nowrap; }
+.cv-check input { accent-color: var(--accent); }
 .cv-spacer { flex: 1; }
 .cv-search { position: relative; width: 232px; }
 .cv-search input {
   width: 100%; padding: 7px 11px 7px 29px;
   border-radius: 8px; border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.06); color: var(--ink);
+  background: var(--panel-2); color: var(--ink);
   font-family: inherit; font-size: 12px; outline: none;
 }
-.cv-search input:focus { border-color: rgba(56, 189, 248, 0.55); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1); }
-.cv-search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); opacity: .5; pointer-events: none; }
+.cv-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cv-search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); opacity: .55; pointer-events: none; }
 .cv-results {
   position: absolute; top: 36px; left: 0; right: 0; z-index: 30;
-  background: rgba(9, 15, 27, 0.98); border: 1px solid var(--line);
+  background: var(--panel); border: 1px solid var(--line);
   border-radius: 9px; display: none; overflow: hidden auto;
-  max-height: 320px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  max-height: 320px; box-shadow: 0 16px 40px var(--shadow);
 }
 .cv-results.show { display: block; }
-.cv-result { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid rgba(148, 163, 184, 0.08); }
-.cv-result:hover { background: rgba(56, 189, 248, 0.1); }
-.cv-result b { display: block; font-size: 11.5px; font-weight: 600; }
-.cv-result span { font-size: 10px; color: var(--sub); }
-.cv-result em { font-size: 10px; color: var(--sub); font-style: normal; }
+.cv-result { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.cv-result:hover { background: var(--accent-soft); }
+.cv-result b { display: block; font-size: 12px; font-weight: 600; color: var(--ink); }
+.cv-result span { font-size: 11.5px; color: var(--sub); }
+.cv-result em { font-size: 11.5px; color: var(--sub); font-style: normal; }
 .cv-btn {
-  border: 1px solid var(--line); background: rgba(148, 163, 184, 0.06);
+  border: 1px solid var(--line); background: var(--panel-2);
   color: var(--ink); border-radius: 8px; padding: 6px 11px;
-  font-family: inherit; font-size: 11.5px; cursor: pointer;
-  white-space: nowrap; transition: all .15s ease;
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  white-space: nowrap; transition: background .15s ease, border-color .15s ease, color .15s ease;
 }
-.cv-btn:hover { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: #bae6fd; }
-.cv-btn:disabled { opacity: .35; cursor: default; }
-.cv-status { font-size: 10.5px; color: #fbbf24; white-space: nowrap; }
+.cv-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.cv-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cv-btn:disabled { opacity: .4; cursor: default; }
+.cv-status { font-size: 11.5px; color: var(--warn); white-space: nowrap; }
 .cv-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-.cv-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.cv-stage .view-panel { top: 12px; right: 12px; bottom: 12px; width: 340px; }
+.cv-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  cursor: grab; touch-action: none; outline: none;
+}
+.cv-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .cv-canvas.grabbing { cursor: grabbing; }
 .cv-crumb {
   position: absolute; top: 12px; left: 14px; z-index: 4;
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   max-width: calc(100% - 400px);
-  font-size: 11.5px; color: var(--sub);
-  background: rgba(7, 11, 20, 0.62); padding: 6px 10px; border-radius: 9px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 12px; color: var(--sub);
+  background: var(--panel); padding: 6px 10px; border-radius: 9px;
+  border: 1px solid var(--line); box-shadow: 0 4px 14px var(--shadow);
 }
 .cv-crumb-item {
-  border: 0; background: transparent; color: #93c5fd; cursor: pointer;
-  font-family: inherit; font-size: 11.5px; padding: 0 1px;
+  border: 0; background: transparent; color: var(--accent); cursor: pointer;
+  font-family: inherit; font-size: 12px; padding: 0 1px;
   max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cv-crumb-item:hover { text-decoration: underline; }
+.cv-crumb-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
 .cv-crumb-item.current { color: var(--ink); font-weight: 600; cursor: default; text-decoration: none; }
-.cv-crumb-sep { opacity: .45; font-size: 11px; }
+.cv-crumb-sep { opacity: .55; font-size: 11.5px; }
 .cv-hint {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-  font-size: 11px; color: var(--sub); z-index: 3; pointer-events: none;
-  background: rgba(7, 11, 20, 0.58); padding: 5px 12px; border-radius: 20px;
-  border: 1px solid rgba(148, 163, 184, 0.1); white-space: nowrap;
+  font-size: 11.5px; color: var(--sub); z-index: 3; pointer-events: none;
+  background: var(--panel); padding: 5px 12px; border-radius: 20px;
+  border: 1px solid var(--line); white-space: nowrap;
   max-width: 92%; overflow: hidden; text-overflow: ellipsis;
 }
 .cv-tooltip {
   position: absolute; z-index: 9; pointer-events: none;
-  background: rgba(9, 15, 27, 0.97); border: 1px solid rgba(56, 189, 248, 0.35);
+  background: var(--panel); border: 1px solid var(--line);
   border-radius: 9px; padding: 8px 11px; font-size: 12px; color: var(--ink);
   max-width: 330px; opacity: 0; transform: translateY(4px);
   transition: opacity .12s ease, transform .12s ease;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 10px 30px var(--shadow);
 }
 .cv-tooltip.show { opacity: 1; transform: translateY(0); }
-.cv-tooltip .tt-sub { color: var(--sub); font-size: 10.5px; margin-top: 3px; }
+.cv-tooltip .tt-sub { color: var(--sub); font-size: 12px; margin-top: 3px; }
 .cv-sig {
-  font-family: Consolas, "Cascadia Code", "Courier New", monospace;
-  font-size: 10.5px; color: #a5b4fc; background: rgba(99, 102, 241, 0.09);
-  border-radius: 6px; padding: 6px 8px; margin: 0 0 10px; word-break: break-word;
+  font-family: var(--mono, Consolas), "Cascadia Code", "Courier New", monospace;
+  font-size: 12px; color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+  margin: 0 0 10px; word-break: break-word;
 }
 .cv-actions { display: flex; gap: 6px; margin-top: 10px; }
 .cv-actions .cv-btn { flex: 1; }
-.cv-none { color: var(--sub); font-size: 11.5px; }
-@media (max-width: 980px) {
-  .cv-crumb { max-width: calc(100% - 30px); }
+.cv-none { color: var(--sub); font-size: 12px; }
+@media (max-width: 900px) {
+  .cv-stage .view-panel {
+    top: auto; left: 8px; right: 8px; bottom: 8px;
+    width: auto; max-height: 42%;
+  }
+  .cv-search { width: 158px; }
+  .cv-crumb { max-width: calc(100% - 20px); }
   .cv-hint { display: none; }
 }
 `;
 
-  const CARD_W = 186;
-  const CARD_H = 46;
+  const CARD_W = 196;
+  const CARD_H = 50;
   const MAX_NODES = 180;
   const COL_GAP = CARD_W + 64;
   const MAX_LIST = 40;
-
-  function esc(v) {
-    return String(v == null ? "" : v).replace(/[&<>"']/g, c => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[c]));
-  }
-
-  function num(v) {
-    const n = Number(v);
-    return isFinite(n) ? n : 0;
-  }
-
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-
-  function rgba(hex, alpha) {
-    const raw = String(hex || "").replace("#", "");
-    const h = raw.length === 3 ? raw.split("").map(c => c + c).join("") : raw;
-    const n = parseInt(h, 16);
-    if (!isFinite(n)) return "rgba(148,163,184," + alpha + ")";
-    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
-  }
-
-  function roundRect(c, x, y, w, h, r) {
-    const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-    c.beginPath();
-    c.moveTo(x + rr, y);
-    c.arcTo(x + w, y, x + w, y + h, rr);
-    c.arcTo(x + w, y + h, x, y + h, rr);
-    c.arcTo(x, y + h, x, y, rr);
-    c.arcTo(x, y, x + w, y, rr);
-    c.closePath();
-  }
-
-  function shortFile(path) {
-    const p = String(path || "");
-    if (!p) return "";
-    const parts = p.split(/[\\/]/);
-    return parts.length > 3 ? ".../" + parts.slice(-3).join("/") : p;
-  }
 
   function prettyId(id) {
     const p = String(id || "");
@@ -224,7 +226,8 @@
     function colorOf(sym) {
       const g = groupKey(sym);
       const meta = g ? groups[g] : null;
-      return (meta && /^#[0-9a-f]{3,8}$/i.test(String(meta.color || ""))) ? meta.color : "#38bdf8";
+      // 只接受 #RGB / #RRGGBB，防止分组颜色注入 CSS。
+      return safeColor(meta && meta.color, THEME.accent);
     }
 
     function groupLabelOf(sym) {
@@ -317,8 +320,6 @@
     depthWrap.textContent = "深度 ";
     const depthTabs = document.createElement("span");
     depthTabs.className = "cv-tabs";
-    depthTabs.style.display = "inline-flex";
-    depthTabs.style.marginLeft = "4px";
     const depthButtons = [];
     for (const d of [1, 2, 3]) {
       const b = document.createElement("button");
@@ -326,6 +327,8 @@
       b.type = "button";
       b.dataset.depth = String(d);
       b.textContent = String(d);
+      b.title = "最多展开 " + d + " 层调用";
+      b.setAttribute("aria-pressed", "false");
       b.addEventListener("click", () => setDepth(d));
       depthTabs.appendChild(b);
       depthButtons.push(b);
@@ -337,6 +340,7 @@
     upLabel.className = "cv-check";
     const upCheck = document.createElement("input");
     upCheck.type = "checkbox";
+    upCheck.title = "同时显示直接调用当前根函数的调用者";
     upLabel.appendChild(upCheck);
     upLabel.appendChild(document.createTextNode("含直接调用者"));
     upCheck.addEventListener("change", () => {
@@ -398,6 +402,9 @@
 
     const canvas = document.createElement("canvas");
     canvas.className = "cv-canvas";
+    canvas.tabIndex = 0;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "调用链画布：点击节点查看详情，方向键平移，+ / - 缩放，0 复位视图。");
     stage.appendChild(canvas);
 
     const crumbEl = document.createElement("div");
@@ -416,9 +423,6 @@
 
     const panel = document.createElement("aside");
     panel.className = "view-panel";
-    panel.style.top = "12px";
-    panel.style.right = "12px";
-    panel.style.bottom = "12px";
     const panelHead = document.createElement("div");
     panelHead.className = "view-panel-head";
     const panelTitle = document.createElement("h2");
@@ -533,6 +537,8 @@
       hintEl.textContent = state.edges.length
         ? "点击节点看详情 · 双击重设根 · 滚轮缩放 · 拖拽平移"
         : "该函数在当前深度内没有可显示的调用关系";
+      canvas.setAttribute("aria-label", "调用链画布：" + state.nodes.length + " 个节点、" +
+        state.edges.length + " 条调用边。方向键平移，+ / - 缩放，0 复位视图。");
     }
 
     function layout() {
@@ -594,10 +600,10 @@
       const padTop = 56;
       const padBottom = 40;
       const availW = Math.max(80, vw - padX * 2);
-      const availH = Math.max(80, state.h - padTop - padBottom);
+      const availH = Math.max(80, (state.w <= 900 ? state.h * 0.56 : state.h) - padTop - padBottom);
       const bw = Math.max(1, maxX - minX);
       const bh = Math.max(1, maxY - minY);
-      const k = clamp(Math.min(availW / bw, availH / bh), 0.18, 1.15);
+      const k = clamp(Math.min(availW / bw, availH / bh), 0.42, 1.15);
       state.t.k = k;
       state.t.x = padX + (availW - bw * k) / 2 - minX * k;
       state.t.y = padTop + (availH - bh * k) / 2 - minY * k;
@@ -626,17 +632,17 @@
       const c = canvasCtx;
       c.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
       const bg = c.createLinearGradient(0, 0, state.w, state.h);
-      bg.addColorStop(0, "#070b14");
-      bg.addColorStop(0.55, "#0a1322");
-      bg.addColorStop(1, "#0b1729");
+      bg.addColorStop(0, THEME.bg0);
+      bg.addColorStop(0.55, THEME.bg1);
+      bg.addColorStop(1, THEME.bg2);
       c.fillStyle = bg;
       c.fillRect(0, 0, state.w, state.h);
 
       drawGrid(c);
 
       if (!state.nodes.length) {
-        c.fillStyle = "rgba(139,156,182,0.85)";
-        c.font = '12px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+        c.fillStyle = THEME.sub;
+        c.font = '12px ' + CV.FONT;
         c.textAlign = "center";
         c.textBaseline = "middle";
         c.fillText("没有可显示的调用关系", viewportW() / 2, state.h / 2);
@@ -661,11 +667,11 @@
       if (gap < 14) return;
       const ox = ((state.t.x % gap) + gap) % gap;
       const oy = ((state.t.y % gap) + gap) % gap;
-      c.fillStyle = "rgba(148,163,184,0.08)";
+      c.fillStyle = THEME.grid;
       for (let x = ox; x < state.w; x += gap) {
         for (let y = oy; y < state.h; y += gap) {
           c.beginPath();
-          c.arc(x, y, 1, 0, Math.PI * 2);
+          c.arc(x, y, 1.1, 0, Math.PI * 2);
           c.fill();
         }
       }
@@ -685,7 +691,7 @@
       const levels = [...new Set(state.nodes.map(n => n.level))].sort((a, b) => a - b);
       c.textAlign = "center";
       c.textBaseline = "middle";
-      c.font = '600 11px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+      c.font = '600 11.5px ' + CV.FONT;
       for (const lv of levels) {
         const list = state.nodes.filter(n => n.level === lv);
         if (!list.length) continue;
@@ -696,9 +702,9 @@
         const sy = state.t.y + (top - 20) * state.t.k;
         if (sx < 46 || sx > viewportW() - 46 || sy < 24) continue;
         const label = lv < 0 ? "调用者" : lv === 0 ? "根函数" : "第 " + lv + " 层";
-        c.fillStyle = "rgba(147,197,253,0.62)";
+        c.fillStyle = rgba(THEME.accent, 0.82);
         c.fillText(label + " · " + list.length, sx, sy);
-        c.strokeStyle = "rgba(147,197,253,0.14)";
+        c.strokeStyle = rgba(THEME.accent, 0.22);
         c.lineWidth = 1;
         c.beginPath();
         c.moveTo(sx - 36, sy + 9);
@@ -715,12 +721,12 @@
         const active = focusSet ? (focusSet.has(a.id) && focusSet.has(b.id) && (focus.id === a.id || focus.id === b.id)) : false;
         const dim = focusSet && !active;
         const col = a.color;
-        c.globalAlpha = dim ? 0.12 : (active ? 0.95 : 0.4);
-        c.strokeStyle = active ? rgba(col, 0.95) : rgba(col, 0.68);
+        c.globalAlpha = dim ? 0.14 : (active ? 0.95 : 0.5);
+        c.strokeStyle = active ? rgba(col, 0.95) : rgba(col, 0.62);
         c.lineWidth = active ? 2.1 : 1.2;
         if (active) {
-          c.shadowColor = rgba(col, 0.75);
-          c.shadowBlur = 7;
+          c.shadowColor = rgba(col, 0.45);
+          c.shadowBlur = 6;
         }
         let x1;
         let y1;
@@ -770,19 +776,11 @@
       c.fill();
     }
 
-    function ellipsize(c, text, maxW) {
-      const str = String(text == null ? "" : text);
-      if (c.measureText(str).width <= maxW) return str;
-      let t = str;
-      while (t.length > 1 && c.measureText(t + "…").width > maxW) t = t.slice(0, -1);
-      return t + "…";
-    }
-
     function drawNodes(c, focusSet, focus) {
       for (const n of state.nodes) {
         const isFocus = focus && focus.id === n.id;
         const dim = focusSet && !focusSet.has(n.id);
-        c.globalAlpha = dim ? 0.22 : 1;
+        c.globalAlpha = dim ? 0.24 : 1;
         drawNode(c, n, isFocus);
       }
       c.globalAlpha = 1;
@@ -794,15 +792,24 @@
       const col = n.color;
       c.save();
 
+      // 浅色底上用「白化后的分组色」做卡片填充，文字才能保持深色可读。
       roundRect(c, x, y, CARD_W, CARD_H, 9);
-      c.fillStyle = active ? rgba(col, 0.32) : rgba(col, 0.13);
-      c.shadowColor = rgba(col, active ? 0.55 : 0.22);
-      c.shadowBlur = active ? 20 : 10;
+      c.fillStyle = CV.tint(col, active ? 0.76 : 0.86);
+      c.shadowColor = active ? rgba(THEME.accent, 0.3) : rgba(THEME.ink, 0.1);
+      c.shadowBlur = active ? 16 : 6;
       c.fill();
       c.shadowBlur = 0;
-      c.strokeStyle = active ? rgba(col, 0.95) : rgba(col, 0.42);
+      c.strokeStyle = rgba(col, active ? 0.95 : 0.55);
       c.lineWidth = active ? 1.9 : 1;
       c.stroke();
+
+      // 激活态再套一圈主题色光环，和分组色区分开。
+      if (active) {
+        roundRect(c, x - 3, y - 3, CARD_W + 6, CARD_H + 6, 11);
+        c.strokeStyle = rgba(THEME.accent, 0.75);
+        c.lineWidth = 1.4;
+        c.stroke();
+      }
 
       roundRect(c, x + 1, y + 9, 3, CARD_H - 18, 1.5);
       c.fillStyle = rgba(col, 0.95);
@@ -810,19 +817,19 @@
 
       c.textAlign = "left";
       c.textBaseline = "middle";
-      c.font = '600 12px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
-      c.fillStyle = active ? "#f2f8ff" : "#dbe6f5";
-      c.fillText(ellipsize(c, n.label, CARD_W - 26), x + 12, y + 16);
+      c.font = '600 12.5px ' + CV.FONT;
+      c.fillStyle = THEME.ink;
+      c.fillText(CV.ellipsize(c, n.label, CARD_W - 26), x + 12, y + 18);
 
-      c.font = '10px Consolas, "Microsoft YaHei", system-ui, sans-serif';
-      c.fillStyle = "rgba(139,156,182,0.95)";
-      const sub = n.file ? shortFile(n.file) + (n.line ? ":" + n.line : "") : (n.groupLabel || "");
-      c.fillText(ellipsize(c, sub, CARD_W - 24), x + 12, y + 32);
+      c.font = '11.5px ' + CV.MONO;
+      c.fillStyle = THEME.sub;
+      const sub = n.file ? CV.shortPath(n.file, 3) + (n.line ? ":" + n.line : "") : (n.groupLabel || "");
+      c.fillText(CV.ellipsize(c, sub, CARD_W - 24), x + 12, y + 35);
 
       if (n.id === state.rootId) {
         roundRect(c, x - 4, y - 4, CARD_W + 8, CARD_H + 8, 12);
         c.setLineDash([5, 4]);
-        c.strokeStyle = rgba(col, 0.72);
+        c.strokeStyle = rgba(col, 0.7);
         c.lineWidth = 1.2;
         c.stroke();
         c.setLineDash([]);
@@ -856,7 +863,7 @@
         tooltip.dataset.id = node.id;
         tooltip.innerHTML =
           "<b>" + esc(node.label) + "</b>" +
-          '<div class="tt-sub">' + esc(node.file ? shortFile(node.file) + ":" + node.line : "（无文件信息）") + "</div>" +
+          '<div class="tt-sub">' + esc(node.file ? CV.shortPath(node.file, 3) + ":" + node.line : "（无文件信息）") + "</div>" +
           '<div class="tt-sub">' + esc(node.groupLabel) + " · 出 " + node.out + " · 入 " + node.inc + "</div>";
         tooltip.style.borderColor = rgba(node.color, 0.55);
       }
@@ -947,6 +954,44 @@
       }
     }
 
+    // 画布键盘操作：方向键平移、+/- 缩放、0/Home 复位，键鼠能力对齐。
+    function zoomFromCenter(factor) {
+      const cx = viewportW() / 2;
+      const cy = state.h / 2;
+      const before = toWorld(cx, cy);
+      state.t.k = clamp(state.t.k * factor, 0.15, 3.2);
+      const after = toWorld(cx, cy);
+      state.t.x += (after.x - before.x) * state.t.k;
+      state.t.y += (after.y - before.y) * state.t.k;
+    }
+
+    function onCanvasKeyDown(e) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const pan = e.shiftKey ? 96 : 42;
+      let handled = true;
+      switch (e.key) {
+        case "ArrowLeft": state.t.x += pan; break;
+        case "ArrowRight": state.t.x -= pan; break;
+        case "ArrowUp": state.t.y += pan; break;
+        case "ArrowDown": state.t.y -= pan; break;
+        case "+":
+        case "=": zoomFromCenter(1.2); break;
+        case "-":
+        case "_": zoomFromCenter(1 / 1.2); break;
+        case "0":
+        case "Home":
+          if (!state.nodes.length) break;
+          layout();
+          fitView();
+          break;
+        default: handled = false;
+      }
+      if (!handled) return;
+      e.preventDefault();
+      tooltip.classList.remove("show");
+      requestDraw();
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
@@ -954,6 +999,7 @@
     canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("dblclick", onDblClick);
+    canvas.addEventListener("keydown", onCanvasKeyDown);
 
     // ---------------- 根节点 / 历史 / URL ----------------
     function qs() {
@@ -1083,7 +1129,11 @@
     }
 
     function updateDepthTabs() {
-      for (const b of depthButtons) b.classList.toggle("active", Number(b.dataset.depth) === state.depth);
+      for (const b of depthButtons) {
+        const on = Number(b.dataset.depth) === state.depth;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
     }
 
     function syncEntrySelect() {
@@ -1152,8 +1202,9 @@
     function showDetails(node, openSource) {
       if (!node) return;
       const isSynthetic = synthetic.has(node.id);
+      const color = safeColor(node.color, THEME.accent);
       panelTitle.textContent = node.label;
-      panelBadge.innerHTML = '<i style="background:' + node.color + ";color:" + node.color + '"></i><span>' + esc(node.groupLabel) + "</span>";
+      panelBadge.innerHTML = '<i style="background:' + color + ";color:" + color + '"></i><span>' + esc(node.groupLabel) + "</span>";
 
       const outs = uniqueResolved(outIds(node.id));
       const ins = uniqueResolved(inIds(node.id));
@@ -1161,7 +1212,7 @@
       const inList = ins.slice(0, MAX_LIST);
 
       const parts = [];
-      parts.push('<p class="pathline">' + (node.file ? esc(shortFile(node.file)) + ":" + node.line : "（无文件信息）") + "</p>");
+      parts.push('<p class="pathline">' + (node.file ? esc(CV.shortPath(node.file, 3)) + ":" + node.line : "（无文件信息）") + "</p>");
       if (node.signature) parts.push('<div class="cv-sig">' + esc(node.signature) + "</div>");
       if (node.doc) parts.push('<p class="desc">' + esc(node.doc) + "</p>");
       parts.push('<div class="section"><h3>规模</h3><div class="metrics">' +
@@ -1206,6 +1257,10 @@
     }
 
     // ---------------- 搜索 ----------------
+    // 输入去抖：每次按键只启动一次扫描，避免全量 symbols 被反复过滤。
+    const SEARCH_DEBOUNCE = 120;
+    let searchTimer = 0;
+
     function closeResults() {
       resultsEl.classList.remove("show");
       resultsEl.innerHTML = "";
@@ -1240,7 +1295,7 @@
         row.className = "cv-result";
         row.dataset.id = s.id;
         row.innerHTML = "<b>" + esc(s.name || s.qualified || s.id) + "</b><span>" +
-          esc(s.file ? shortFile(s.file) + ":" + num(s.line) : "（无文件信息）") + "</span>";
+          esc(s.file ? CV.shortPath(s.file, 3) + ":" + num(s.line) : "（无文件信息）") + "</span>";
         row.addEventListener("click", () => {
           searchInput.value = "";
           closeResults();
@@ -1251,19 +1306,38 @@
       resultsEl.classList.add("show");
     }
 
-    searchInput.addEventListener("input", runSearch);
+    function scheduleSearch() {
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(runSearch, SEARCH_DEBOUNCE);
+    }
+
+    searchInput.addEventListener("input", () => {
+      if (!searchInput.value.trim()) {
+        window.clearTimeout(searchTimer);
+        closeResults();
+        return;
+      }
+      scheduleSearch();
+    });
     searchInput.addEventListener("keydown", e => {
       if (e.key === "Enter") {
+        // 回车立即扫描，不等去抖计时器。
+        window.clearTimeout(searchTimer);
+        runSearch();
         const first = resultsEl.querySelector(".cv-result[data-id]");
         if (first) first.click();
       } else if (e.key === "Escape") {
+        window.clearTimeout(searchTimer);
         searchInput.value = "";
         closeResults();
       }
     });
+    // 只安装一次；deactivate 后仍存在，用 state.visible 守卫即可。
     document.addEventListener("pointerdown", e => {
       if (!state.visible) return;
-      if (!search.contains(e.target)) closeResults();
+      const target = e.target;
+      if (target && search.contains(target)) return;
+      closeResults();
     });
 
     // ---------------- 尺寸 / 生命周期 ----------------
@@ -1274,7 +1348,8 @@
       const changed = w !== state.w || h !== state.h;
       state.w = w;
       state.h = h;
-      state.dpr = Math.max(1, window.devicePixelRatio || 1);
+      // 高分屏封顶 2 倍，避免 4K / 多屏缩放时画布像素爆炸。
+      state.dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
       if (canvas.width !== Math.round(w * state.dpr) || canvas.height !== Math.round(h * state.dpr)) {
         canvas.width = Math.round(w * state.dpr);
         canvas.height = Math.round(h * state.dpr);
@@ -1355,6 +1430,7 @@
       state.visible = false;
       state.drag = null;
       state.hover = null;
+      window.clearTimeout(searchTimer);
       tooltip.classList.remove("show");
       closeResults();
     }

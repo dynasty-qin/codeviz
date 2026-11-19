@@ -138,3 +138,65 @@ def test_demo_config_is_valid_json(demo_dir: Path) -> None:
 
     assert payload["schema"] == "codeviz/v1"
     assert payload["modules"][0]["glob"] == "app/router/*_router.py"
+
+
+def test_defaults_label_and_desc_are_preserved(tmp_path: Path) -> None:
+    (tmp_path / "codeviz.json").write_text(
+        json.dumps(
+            {
+                "defaults": {
+                    "group": "other",
+                    "id": "{dir}",
+                    "label": "默认 · {stem}",
+                    "desc": "没有命中规则的模块",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(tmp_path)
+
+    assert cfg["defaults"]["label"] == "默认 · {stem}"
+    assert cfg["defaults"]["desc"] == "没有命中规则的模块"
+
+    info = config_module.match_module("scripts/seed.py", cfg)
+    assert info["label"] == "默认 · seed"
+    assert info["desc"] == "没有命中规则的模块"
+
+
+def test_defaults_label_and_desc_ignore_bad_types(tmp_path: Path) -> None:
+    (tmp_path / "codeviz.json").write_text(
+        json.dumps({"defaults": {"label": 3, "desc": ["nope"], "group": 5, "id": None}}),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(tmp_path)
+
+    assert "label" not in cfg["defaults"]
+    assert "desc" not in cfg["defaults"]
+    assert cfg["defaults"]["group"] == "other"
+    assert cfg["defaults"]["id"] == "{dir}"
+
+
+def test_exclude_merges_default_patterns(tmp_path: Path) -> None:
+    (tmp_path / "codeviz.json").write_text(
+        json.dumps({"exclude": ["build/**", ".codeviz/**", "dist/**", "build/**"]}),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(tmp_path)
+
+    assert cfg["exclude"] == [".codeviz/**", "build/**", "dist/**"]
+
+
+def test_exclude_non_list_falls_back_to_defaults(tmp_path: Path) -> None:
+    (tmp_path / "codeviz.json").write_text(
+        json.dumps({"exclude": "build/**"}),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(tmp_path)
+
+    assert cfg["exclude"] == [".codeviz/**"]

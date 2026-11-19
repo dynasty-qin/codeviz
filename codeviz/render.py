@@ -9,11 +9,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shutil
 import webbrowser
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,8 @@ from . import model, overlays
 from .adapters import codegraph, generic
 from .config import ConfigError, load_config
 
-TZ = timezone(timedelta(hours=8))
+OUTPUT_MARKER = ".codeviz-output"
+_MARKER_CONTENT = "codeviz site output\n"
 
 _SCRIPT_TAG = re.compile(r'<script\b[^>]*\bsrc="assets/([^"]+)"[^>]*>\s*</script>')
 _STYLE_TAG = re.compile(r'<link\b[^>]*href="assets/([^"]+)"[^>]*>')
@@ -38,6 +40,8 @@ def build_project(
     config_path=None,
     output_format: str = "site",
     open_browser: bool = False,
+    write_data_json: bool = True,
+    hide_root: bool = False,
 ) -> int:
     """Build the visualization and return a process exit code."""
 
@@ -79,14 +83,24 @@ def build_project(
         project["name"] = root.name or "codeviz"
     if not target.is_file() or not project.get("root"):
         project["root"] = root.as_posix()
-    project["generated_at"] = datetime.now(TZ).isoformat(timespec="seconds")
+    project["generated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    # Keep the declared root for overlay-image resolution, then optionally hide
+    # absolute local paths from the published payload (``--no-root`` /
+    # ``project.hide_root``).
+    declared_root = project.get("root")
+    config_project = config.get("project")
+    hide = bool(hide_root)
+    if isinstance(config_project, dict) and config_project.get("hide_root"):
+        hide = True
+    if hide:
+        project["root"] = ""
 
     if not data["overlays"] and config:
         data["overlays"] = overlays.load_overlays(config)
 
     asset_root = root
     if target.is_file():
-        declared_root = project.get("root")
         if isinstance(declared_root, str) and Path(declared_root).is_dir():
             asset_root = Path(declared_root)
 
@@ -94,13 +108,18 @@ def build_project(
     if not output.is_absolute():
         output = root / output
     output = output.resolve()
-    _guard_output(output)
+    _guard_output(output, root)
 
     if output_format == "single-file":
         index_path = render_single_file(data, output, project_path=asset_root)
         kind_label = "single-file"
     else:
-        index_path = render_site(data, output, project_path=asset_root)
+        index_path = render_site(
+            data,
+            output,
+            project_path=asset_root,
+            write_data_json=write_data_json,
+        )
         kind_label = "site"
 
     _print_summary(data, index_path, kind_label, source_label)
@@ -113,16 +132,29 @@ def build_project(
     return 0
 
 
-def render_site(data: dict, out_dir: Path, *, project_path: Path | None = None) -> Path:
+def render_site(
+    data: dict,
+    out_dir: Path,
+    *,
+    project_path: Path | None = None,
+    write_data_json: bool = True,
+) -> Path:
     """Write the multi-file static site and return ``<out>/index.html``."""
 
     output = Path(out_dir)
+    _guard_output(output, project_path or _declared_root(data))
     web = web_dir()
     if not (web / "index.html").is_file():
         raise FileNotFoundError(f"缺少 web 模板目录: {web}")
 
     assets = output / "assets"
     if assets.exists():
+        if not _is_previous_build(assets, output):
+            raise ValueError(
+                f"拒绝覆盖 {assets}：该目录不像 codeviz 生成的站点"
+                f"（缺少 data.js 或 {OUTPUT_MARKER} 标记）。\n"
+                f"请改用其它 --out 目录，或在确认无用后手动删除 {assets}。"
+            )
         shutil.rmtree(assets)
     assets.mkdir(parents=True, exist_ok=True)
 
@@ -137,12 +169,14 @@ def render_site(data: dict, out_dir: Path, *, project_path: Path | None = None) 
         ignore=shutil.ignore_patterns("index.html", "__pycache__"),
     )
 
-    payload = model.dumps_json(data)
     (assets / "data.js").write_text(model.data_js(data), encoding="utf-8")
-    (assets / "viz-data.json").write_text(payload, encoding="utf-8")
+    if write_data_json:
+        (assets / "viz-data.json").write_text(model.dumps_json(data), encoding="utf-8")
 
     index_path = output / "index.html"
     shutil.copyfile(web / "index.html", index_path)
+    # Marker used by the next build to recognise its own output directory.
+    (output / OUTPUT_MARKER).write_text(_MARKER_CONTENT, encoding="utf-8")
     return index_path
 
 
@@ -168,12 +202,16 @@ def build_single_html(data: dict, *, project_path: Path | None = None) -> str:
     html = template_path.read_text(encoding="utf-8")
 
     payload_data = dict(data)
+    # Deep-copy the overlays: single-file builds rewrite ``image`` to a data
+    # URI, which must never leak back into the caller's payload.
+    raw_overlays = data.get("overlays")
+    if isinstance(raw_overlays, list):
+        payload_data["overlays"] = copy.deepcopy(raw_overlays)
     asset_root = _asset_root(data, project_path)
     if asset_root is not None:
-        data["overlays"] = overlays.inline_overlay_images(
-            data.get("overlays") or [], asset_root
+        payload_data["overlays"] = overlays.inline_overlay_images(
+            payload_data.get("overlays") or [], asset_root
         )
-        payload_data["overlays"] = data["overlays"]
     payload = _inline_safe(model.data_js(payload_data))
 
     def replace_style(match: re.Match[str]) -> str:
@@ -246,14 +284,68 @@ def _reject_constant(value: str) -> Any:
     raise ValueError(f"JSON 中不允许 {value}")
 
 
-def _guard_output(output: Path) -> None:
+def _guard_output(output: Path, project_root: Path | None = None) -> None:
     web = web_dir().resolve()
     try:
-        relative = output.relative_to(web)
+        candidate = output.expanduser().resolve()
+    except OSError:
+        candidate = output
+    try:
+        candidate.relative_to(web)
     except ValueError:
-        relative = None
-    if relative is not None:
+        pass
+    else:
         raise ValueError(f"输出目录不能位于 web 模板目录内: {output}")
+
+    if project_root is not None:
+        try:
+            root = Path(project_root).expanduser().resolve()
+        except OSError:
+            root = Path(project_root)
+        if candidate == root:
+            raise ValueError(
+                f"输出目录不能是项目根目录: {output}\n"
+                "请改用子目录（例如 <project>/.codeviz）或其它 --out 路径。"
+            )
+        try:
+            root.relative_to(candidate)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                f"输出目录不能是项目根目录的上级: {output}\n"
+                "在那里构建可能覆盖同名 assets/，请换一个独立目录。"
+            )
+
+
+def _declared_root(data: dict) -> Path | None:
+    declared = (data.get("project") or {}).get("root")
+    if isinstance(declared, str) and declared:
+        return Path(declared).expanduser()
+    return None
+
+
+def _is_previous_build(assets: Path, output: Path) -> bool:
+    """Return True when ``<out>/assets`` may be safely replaced."""
+
+    if not assets.exists():
+        return True
+    if not assets.is_dir():
+        return False
+    if not any(assets.iterdir()):
+        return True
+    if (output / OUTPUT_MARKER).is_file():
+        return True
+    data_js = assets / "data.js"
+    if data_js.is_file():
+        try:
+            with data_js.open("rb") as handle:
+                head = handle.read(4096)
+        except OSError:
+            return False
+        if b"CODEVIZ_DATA" in head:
+            return True
+    return False
 
 
 def _asset_root(data: dict, project_path: Path | None) -> Path | None:

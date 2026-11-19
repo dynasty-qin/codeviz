@@ -8,7 +8,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from codeviz.cli import main
+import pytest
+
+from codeviz.cli import __version__, main
 
 
 def _run_cli(argv: list[str]) -> int:
@@ -21,6 +23,16 @@ def _run_cli(argv: list[str]) -> int:
             return 0
         return code if isinstance(code, int) else 1
     return int(result or 0)
+
+
+def _extract_data_js(text: str) -> dict:
+    marker = "window.CODEVIZ_DATA"
+    position = text.find(marker)
+    assert position >= 0, "未找到 window.CODEVIZ_DATA"
+    brace = text.find("{", position + len(marker))
+    assert brace >= 0
+    value, _end = json.JSONDecoder().raw_decode(text[brace:])
+    return value
 
 
 def test_cli_build_demo_site(project: Path, tmp_path: Path) -> None:
@@ -94,3 +106,48 @@ def test_cli_validate_rejects_invalid_data(tmp_path: Path) -> None:
     bad.write_text(json.dumps({"schema": "codeviz/v0"}), encoding="utf-8")
 
     assert _run_cli(["validate", str(bad)]) != 0
+
+
+def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:
+    assert __version__
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--version"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == f"codeviz {__version__}"
+
+
+def test_cli_build_writes_viz_data_json_by_default(project: Path, tmp_path: Path) -> None:
+    out_dir = tmp_path / "default-json"
+
+    code = _run_cli(["build", str(project), "--out", str(out_dir)])
+
+    assert code == 0
+    assert (out_dir / "assets" / "data.js").is_file()
+    assert (out_dir / "assets" / "viz-data.json").is_file()
+
+
+def test_cli_build_no_data_json(project: Path, tmp_path: Path) -> None:
+    out_dir = tmp_path / "no-json"
+
+    code = _run_cli(
+        ["build", str(project), "--out", str(out_dir), "--no-data-json"]
+    )
+
+    assert code == 0
+    assert (out_dir / "assets" / "data.js").is_file()
+    assert not (out_dir / "assets" / "viz-data.json").exists()
+
+
+def test_cli_build_no_root(project: Path, tmp_path: Path) -> None:
+    out_dir = tmp_path / "no-root"
+
+    code = _run_cli(["build", str(project), "--out", str(out_dir), "--no-root"])
+
+    assert code == 0
+    payload = _extract_data_js(
+        (out_dir / "assets" / "data.js").read_text(encoding="utf-8")
+    )
+    assert payload["project"]["root"] == ""

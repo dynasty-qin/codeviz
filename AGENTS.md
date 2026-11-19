@@ -31,11 +31,12 @@
 python -m pytest -q                     # 仓库根运行，无需先 pip install（conftest 注入 sys.path）
 python -m pytest tests/test_render.py -q   # 单个文件；加 -k 关键词筛用例
 python -m codeviz.cli build examples/demo --config examples/demo/codeviz.json --out .tmp-site
+python -m codeviz.cli build . --no-data-json --no-root   # 产物更小 / 不写本机绝对路径
 pip install -e ".[yaml]"                # 只有读 codeviz.yml 才需要 PyYAML；JSON 配置零依赖
 ```
 
-- 没有 lint / format / typecheck 配置，不要臆造那类命令；CI（`.github/workflows/tests.yml`）只跑 `pytest -q`，
-  Python 3.10/3.11/3.12。
+- 没有 Python lint / format / typecheck 配置，不要臆造那类命令；CI（`.github/workflows/tests.yml`）跑
+  `pytest -q`（Ubuntu 3.10/3.11/3.12 + Windows 3.12）和所有 `codeviz/web/**/*.js` 的 `node --check`。
 - 构建 `examples/demo` 前需先有索引（见上节）；没有索引时改为直接传一份 `codeviz/v1` JSON 给 `build`。
 
 ## 测试
@@ -44,18 +45,22 @@ pip install -e ".[yaml]"                # 只有读 codeviz.yml 才需要 PyYAML
   最小库。改动适配器对表/列结构的假设时，同步改这里的 DDL。
 - 常用夹具：`project`（demo 的临时副本 + 假索引）、`demo_data`（构建好的 v1 数据）、`minimal_data`
   （`tests/fixtures/minimal_data.json`）。测试只写 `tmp_path`，不要写真实 `examples/demo`。
-- 全套 52 个用例亚秒级跑完，改完直接全量跑。
+- 全套 79 个用例亚秒级跑完，改完直接全量跑。
 
 ## 输出与 web 资源
 
-- `codeviz/web/` 是站点源码，`render_site` 会先 `rmtree(<out>/assets)` 再整目录拷贝；
-  输出目录不允许落在 `codeviz/web` 内（`render._guard_output`）。
-- `web/index.html` 里 `<script src="assets/...">` 的顺序固定（`data.js` → `views/*.js` → `app.js`）。
+- `codeviz/web/` 是站点源码。`render_site` 会重建 `<out>/assets`，但只在该目录为空、存在 `.codeviz-output` 标记、
+  或 `assets/data.js` 是 codeviz 产物时才清理；`--out` 不能等于项目根、不能是项目根的上级，也不能落在 `codeviz/web` 内。
+- `web/index.html` 脚本顺序固定：`data.js` → `views/common.js` → 各视图 → `app.js`。
   `--format single-file` 靠正则替换这些标签内联资源，改标签写法会悄悄破坏单文件输出。
-- 新增视图：在 `codeviz/web/views/` 注册 `window.CodeViz.registerView`，在 `index.html` 的 `app.js` 之前引入，
-  并在 `app.js` 的 tab 表登记。`pyproject.toml` 的 package-data 只覆盖 `web/*` 与 `web/views/*`，
-  新增子目录要补。
-- 产物里 `assets/data.js` 是 `window.CODEVIZ_DATA = {...};`，`assets/viz-data.json` 是同一份纯 JSON。
+- 视图注册：`common.js` 先建 `window.CodeViz` 的 `_pending` 队列，视图直接调用
+  `window.CodeViz.registerView`，`app.js` 接管同一个对象并 flush 队列。不要再引入 shim/defineProperty。
+- 共享工具与主题：`window.CV`（esc/clamp/rgba/roundRect/ellipsize...）和 `window.CVTheme`（浅色 token）
+  在 `views/common.js`；CSS 变量在 `styles.css` 的 `:root`。两处颜色必须同步修改，视图里不要再写一套。
+- 新增视图：放 `codeviz/web/views/`，用 `registerView` 注册，在 `index.html` 的 `app.js` 之前引入，并在
+  `app.js` 的 tab 表登记。`pyproject.toml` 的 package-data 只覆盖 `web/*` 与 `web/views/*`，新增子目录要补。
+- 产物里 `assets/data.js` 是 `window.CODEVIZ_DATA = {...};`；`assets/viz-data.json` 可用 `--no-data-json` 关闭；
+  `--no-root` / `project.hide_root` 会把 `project.root` 置空，避免分享时泄漏本机路径。
 
 ## 适配器注意事项
 

@@ -9,6 +9,30 @@ description = "CodeGraph-based architecture, call-chain and complexity visualiza
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+keywords = [
+    "codegraph",
+    "visualization",
+    "architecture",
+    "call-graph",
+    "static-analysis",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/dynasty-qin/codeviz"
+Repository = "https://github.com/dynasty-qin/codeviz"
+Issues = "https://github.com/dynasty-qin/codeviz/issues"
 
 [project.optional-dependencies]
 yaml = ["PyYAML>=6.0"]
@@ -26,3 +50,7 @@ codeviz = ["web/*", "web/views/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

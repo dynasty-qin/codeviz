@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from typing import Any
 
@@ -46,6 +47,11 @@ ARRAY_FIELDS = (
     "entries",
     "overlays",
 )
+
+#: How many problems of each reference kind are reported before truncating.
+MAX_REFERENCE_ERRORS = 5
+
+_GROUP_COLOR = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\Z")
 
 
 def warn(message: str) -> None:
@@ -207,6 +213,8 @@ def validate_data(data: Any) -> list[str]:
             errors.append(f"{key} 必须是数组")
 
     errors.extend(_validate_items(data))
+    errors.extend(_validate_references(data))
+    errors.extend(_validate_group_colors(data))
     errors.extend(_find_non_finite(data))
 
     if len(errors) > 50:
@@ -301,6 +309,62 @@ def _list(value: Any) -> list[dict]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _symbol_ids(data: dict) -> set[str]:
+    return {
+        symbol["id"]
+        for symbol in _list(data.get("symbols"))
+        if isinstance(symbol.get("id"), str) and symbol["id"]
+    }
+
+
+def _validate_references(data: dict) -> list[str]:
+    """Check that calls / entries point at existing symbols."""
+
+    ids = _symbol_ids(data)
+    errors: list[str] = []
+
+    for field in ("source", "target"):
+        reported = 0
+        for index, call in enumerate(_list(data.get("calls"))):
+            value = call.get(field)
+            if not isinstance(value, str) or value in ids:
+                continue
+            if reported >= MAX_REFERENCE_ERRORS:
+                break
+            errors.append(f"calls[{index}].{field} 指向不存在的符号: {value!r}")
+            reported += 1
+
+    reported = 0
+    for index, entry in enumerate(_list(data.get("entries"))):
+        value = entry.get("id")
+        if not isinstance(value, str) or value in ids:
+            continue
+        if reported >= MAX_REFERENCE_ERRORS:
+            break
+        errors.append(f"entries[{index}].id 指向不存在的符号: {value!r}")
+        reported += 1
+
+    return errors
+
+
+def _validate_group_colors(data: dict) -> list[str]:
+    groups = data.get("groups")
+    if not isinstance(groups, dict):
+        return []
+
+    errors: list[str] = []
+    for key, group in groups.items():
+        if not isinstance(group, dict) or "color" not in group:
+            continue
+        color = group["color"]
+        if isinstance(color, str) and _GROUP_COLOR.match(color):
+            continue
+        if len(errors) >= MAX_REFERENCE_ERRORS:
+            break
+        errors.append(f"groups[{key!r}].color 必须是 #RGB 或 #RRGGBB: {color!r}")
+    return errors
 
 
 def _find_non_finite(value: Any, path: str = "$") -> list[str]:
